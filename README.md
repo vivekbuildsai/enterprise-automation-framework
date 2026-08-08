@@ -28,7 +28,7 @@ independently optional (off by default — see
 | **Data Validation** | End-to-end UI → API/network → Database validation with real numeric tolerance (`DataComparator` + `Tolerance`, dispatched by `ValidationFacade`) | No |
 | **Application Discovery** | Evidence-only UI/API/DB introspection + code scaffolding (`framework.discovery`) | Yes |
 | **Multi-Language & Multi-Framework Framework Sync** | Read-only analysis + migration scaffolding for an *existing* automation repo — Java, TypeScript/JavaScript, Python, C#, and Robot Framework (`framework.sync`) | Yes |
-| **New UI Extension Analysis** | Reuse-first plan for a new UI on an existing framework/API/DB (`framework.extension`) | Yes |
+| **New UI Extension Analysis + Scaffolding** | Reuse-first plan for a new UI on an existing framework/API/DB, plus an optional human-approved, framework-native scaffold for whatever's genuinely new (`framework.extension`) | Yes |
 | **AI Assistance** | Optional, provider-agnostic recommendation layer over Discovery/Sync output (`framework.ai`) | Yes |
 
 **The framework's key differentiator is end-to-end UI + API + Database
@@ -101,8 +101,8 @@ poetry run python -m framework discover recommend --report report.json  # option
 poetry run python -m framework sync analyze <source> --report analysis.json
 poetry run python -m framework sync recommend --report analysis.json    # optional AI layer
 poetry run python -m framework sync scaffold --report analysis.json
-poetry run python -m framework discover ui <new-ui-url> --capture-network --report new-ui.json
-poetry run python -m framework extension analyze --discovery-report new-ui.json --sync-report analysis.json --output extension-plan.json
+poetry run python -m framework extension analyze --framework <existing-path> --url <new-ui-url> --sync-report analysis.json --discovery-report new-ui.json --output extension-plan.json
+poetry run python -m framework extension scaffold --extension-report extension-plan.json --sync-report analysis.json --discovery-report new-ui.json --output-dir generated/extension --approve
 poetry run python -m framework validate --expected e.json --actual a.json
 poetry run python -m framework report generate
 ```

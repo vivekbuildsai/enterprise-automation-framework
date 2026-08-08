@@ -276,19 +276,36 @@ automation ecosystem and produce a reviewable reuse plan instead of a second
 framework:
 
 ```bash
-poetry run python -m framework sync analyze /path/to/existing-framework --report existing.json
-poetry run python -m framework discover ui https://new-ui.example.test --capture-network --report new-ui.json
 poetry run python -m framework extension analyze \
-  --discovery-report new-ui.json \
-  --sync-report existing.json \
+  --framework /path/to/existing-framework \
+  --url https://new-ui.example.test \
+  --sync-report existing.json --discovery-report new-ui.json \
   --output extension-plan.json
 ```
 
-`--capture-network` is deliberately opt-in. The discovery report persists
-only request/response shape (method, path, status, and key names), never
-headers, body values, tokens, or credentials. The extension report identifies
-evidence-backed reuse candidates and classifies each as reuse, extend, create,
-unknown, or manual review; it never alters either application.
+This one command analyzes the existing repository and discovers the new UI
+(network capture is always shape-only here — method, path, status, and key
+names, never headers, body values, tokens, or credentials) before
+correlating the two. The extension report identifies evidence-backed reuse
+candidates and classifies each as reuse, extend, create, unknown, or manual
+review; it never alters either application. Optionally turn it into a
+framework-native scaffold — never a second automation ecosystem — only
+after explicit review:
+
+```bash
+poetry run python -m framework extension scaffold \
+  --extension-report extension-plan.json \
+  --sync-report existing.json --discovery-report new-ui.json \
+  --output-dir generated/extension \
+  --approve
+```
+
+`scaffold` always previews first (nothing is written without `--approve`),
+only generates `CREATE_NEW`/`EXTEND_EXISTING` items in the existing
+repository's own detected language/framework/test-runner style, and only
+ever writes inside the customer's own project. See
+[FrameworkSync.md](FrameworkSync.md#framework-native-scaffolding) for the
+full safety model.
 
 ## Troubleshooting
 

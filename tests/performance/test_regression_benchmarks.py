@@ -13,10 +13,29 @@ from __future__ import annotations
 import time
 
 from framework.database.utilities.comparison import DataComparator, Tolerance
-from framework.discovery.models import DiscoveredNetworkCall
+from framework.discovery.models import (
+    DiscoveredElement,
+    DiscoveredLocator,
+    DiscoveredNetworkCall,
+    DiscoveredPage,
+    DiscoveryReport,
+)
 from framework.extension.correlation import correlate_network_calls
+from framework.extension.models import (
+    ExtensionClassification,
+    ExtensionItem,
+    ExtensionReport,
+    ExtensionSubjectType,
+    ScaffoldTarget,
+)
+from framework.extension.scaffold import build_scaffold_plan
 from framework.network.interceptor import NetworkInterceptor
-from framework.sync.models import CapabilityCatalog, CapabilityCategory, ExistingCapability
+from framework.sync.models import (
+    CapabilityCatalog,
+    CapabilityCategory,
+    ExistingCapability,
+    RepositoryAnalysis,
+)
 
 
 def test_comparison_scales_linearly_not_quadratically() -> None:
@@ -133,3 +152,69 @@ def test_extension_correlation_does_not_recompile_patterns_per_comparison() -> N
         f"300 calls x 300 capabilities took {elapsed_ms:.1f}ms (budget: 500ms) — looks like "
         f"the per-comparison regex-recompilation regression is back"
     )
+
+
+def test_scaffold_plan_generation_scales_to_hundreds_of_pages() -> None:
+    """Regression guard for `build_scaffold_plan` at a customer-scale new
+    UI (hundreds of discovered pages, each producing a Page Object + a
+    test file) — measured at ~50ms for 300 pages (600+ files planned)
+    during development; this budget is a generous multiple of that.
+    """
+    n = 300
+    pages = []
+    items = []
+    capabilities = []
+    for i in range(n):
+        pages.append(
+            DiscoveredPage(
+                url=f"https://example.test/entity{i}/{i}",
+                title=f"Entity {i} Details",
+                elements=[
+                    DiscoveredElement(
+                        tag="button",
+                        element_type="button",
+                        text=f"Save {i}",
+                        locator=DiscoveredLocator(strategy="test_id", value=f"save-{i}"),
+                    )
+                ],
+                network_calls=[
+                    DiscoveredNetworkCall(method="GET", path=f"/entity{i}/{i}", status=200)
+                ],
+            )
+        )
+        items.append(
+            ExtensionItem(
+                subject=f"Entity {i} Details",
+                subject_type=ExtensionSubjectType.UI_PAGE,
+                classification=ExtensionClassification.CREATE_NEW,
+                reason="new",
+            )
+        )
+        capabilities.append(
+            ExistingCapability(
+                category=CapabilityCategory.API_CLIENT,
+                name=f"Entity{i}Api.get",
+                source_file=f"api/e{i}.py",
+                endpoint_pattern=f"/entity{i}/{{param}}",
+                http_method="GET",
+            )
+        )
+
+    discovery_report = DiscoveryReport(source="new-ui", pages=pages)
+    extension_report = ExtensionReport(extension_items=items)
+    analysis = RepositoryAnalysis(
+        source="existing",
+        primary_language="Python",
+        capability_catalog=CapabilityCatalog(capabilities=capabilities),
+    )
+
+    start = time.perf_counter()
+    files, _ = build_scaffold_plan(
+        analysis, discovery_report, extension_report, target=ScaffoldTarget.PYTHON_PYTEST_PLAYWRIGHT
+    )
+    elapsed_ms = (time.perf_counter() - start) * 1000
+
+    assert len(files) > n
+    assert (
+        elapsed_ms < 1000
+    ), f"build_scaffold_plan() for {n} pages took {elapsed_ms:.1f}ms (budget: 1000ms)"

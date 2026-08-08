@@ -249,32 +249,78 @@ document. `generate` writes `.py` files under `--output-dir` (default
 
 ## Extend an existing framework for a new UI (optional)
 
-Use this read-only workflow when a customer has a mature automation suite
-but introduces a new UI on the same backend. It inventories existing assets,
-discovers the new UI, then writes a human-reviewable reuse/extension plan.
-Neither the existing repository nor the new UI is modified.
+Use this read-only-by-default workflow when a customer has a mature
+automation suite but introduces a new UI on the same backend. It
+inventories existing assets, discovers the new UI, writes a
+human-reviewable reuse/extension plan, and — only after explicit
+approval — generates a framework-native scaffold for whatever genuinely
+needs to be created. Neither the existing repository nor the new UI is
+ever modified.
 
 ```bash
-# 1. Read-only static inventory of the existing automation repository
+# One-shot: analyze the existing framework AND discover the new UI in a
+# single command — the normal path, no need to run three CLIs by hand.
+# --capture-network is always on for the discovered UI here; it stores
+# shape only (HTTP method/path/status and parameter/key names), never
+# values, headers, or credentials.
+poetry run python -m framework extension analyze \
+  --framework <existing-framework-path> \
+  --url <new-ui-url> \
+  --sync-report existing.json --discovery-report new-ui.json \
+  --output extension-plan.json
+
+# Advanced: reuse already-computed reports instead (e.g. from a separate
+# `sync analyze` / `discover ui --capture-network` run, or a CI rerun).
 poetry run python -m framework sync analyze <existing-framework-path> --report existing.json
-
-# 2. Discover the new UI. --capture-network is opt-in and stores shape only:
-#    HTTP method/path/status and parameter/key names, never values, headers, or credentials.
 poetry run python -m framework discover ui <new-ui-url> --capture-network --report new-ui.json
+poetry run python -m framework extension analyze --sync-report existing.json --discovery-report new-ui.json --mode reuse-analysis --output reuse.json
 
-# 3. Produce correlations only, or the default full extension plan.
-poetry run python -m framework extension analyze --discovery-report new-ui.json --sync-report existing.json --mode reuse-analysis --output reuse.json
-poetry run python -m framework extension analyze --discovery-report new-ui.json --sync-report existing.json --output extension-plan.json
-
-# 4. Optional advisory AI suggestions for UNKNOWN/MANUAL_REVIEW items only.
-poetry run python -m framework extension analyze --discovery-report new-ui.json --sync-report existing.json --mode ai-recommendations --ai-output suggestions.json --output extension-plan.json
+# Optional advisory AI suggestions for MANUAL_REVIEW/UNKNOWN items only.
+poetry run python -m framework extension analyze --sync-report existing.json --discovery-report new-ui.json --mode ai-recommendations --ai-output suggestions.json --output extension-plan.json
 ```
 
 The extension report classifies each item as `REUSE_EXISTING`,
 `EXTEND_EXISTING`, `CREATE_NEW`, `UNKNOWN`, or `MANUAL_REVIEW`, with source
-evidence. API matches require endpoint and HTTP-method evidence; table/path
-matches are possible DB reuse candidates, not proof of data lineage. Review
-the report before creating a Page Object, test, or any new capability.
+evidence, and prints a REUSE MATRIX summary. API matches require endpoint
+and HTTP-method evidence; table/path matches are possible DB reuse
+candidates, not proof of data lineage. Review the report before scaffolding
+anything.
+
+### Framework-native scaffolding (optional, human-approved)
+
+Generates NEW automation — Page Object + test — only for items the
+extension plan classified `CREATE_NEW`/`EXTEND_EXISTING`, only in the
+existing repository's own detected language/framework/test-runner style
+(Java+Selenium+TestNG, Java+Selenium+JUnit, Python+pytest+Playwright,
+TypeScript+Playwright, or Robot Framework — anything else falls back to a
+README-only plan rather than fabricating code in the wrong ecosystem).
+Existing, already-reusable capabilities are referenced by name and source
+file in a comment — never duplicated as a second implementation.
+
+```bash
+# Always a preview first (no files written) — inspect before approving.
+poetry run python -m framework extension scaffold \
+  --extension-report extension-plan.json \
+  --sync-report existing.json --discovery-report new-ui.json \
+  --output-dir generated/extension
+
+# Explicit human approval writes the files (plus extension-manifest.json).
+poetry run python -m framework extension scaffold \
+  --extension-report extension-plan.json \
+  --sync-report existing.json --discovery-report new-ui.json \
+  --output-dir generated/extension --approve
+
+# --overwrite is required to replace files already at the generated paths;
+# without it, a conflicting path fails the whole write (never partial).
+```
+
+`--output-dir` must resolve inside `framework.project_root.PROJECT_ROOT`
+(the customer's own project) — never inside this package's installed
+location. Every generated file carries a `GENERATED SCAFFOLD — REVIEW
+REQUIRED` notice and `TODO` markers for anything not itself confirmed
+evidence (an unlabeled locator, an assumed API mapping, a DB assertion,
+authentication state). Run the customer's own normal test command against
+the reviewed output — nothing here is ever labeled production ready.
 
 ---
 

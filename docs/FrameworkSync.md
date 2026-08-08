@@ -3,18 +3,22 @@
 ## New UI extension analysis
 
 Framework Sync can also be the read-only capability inventory for a new UI
-added to an already mature automation ecosystem. Run `sync analyze` against
-the existing repository, discover the new UI with opt-in shape-only network
-capture, then use `python -m framework.extension analyze` to produce an
-extension report. The report identifies evidence-backed reuse candidates for
-existing API, database, authentication, validation, test-data, reporting,
-Page Object, and component capabilities; it never modifies either target.
+added to an already mature automation ecosystem. `python -m framework
+extension analyze --framework <existing-path> --url <new-ui-url>` runs
+`sync analyze` and shape-only new-UI discovery internally in one command
+(saving both intermediate reports too), correlates the two, and produces
+an extension report. The report identifies evidence-backed reuse candidates
+for existing API, database, authentication, validation, test-data,
+reporting, Page Object, and component capabilities; analysis never modifies
+either target.
 
 An API endpoint/method match is a likely reuse candidate, while a path/table
 name match is deliberately weaker evidence and is reported as an extension or
 manual-review candidate. `UNKNOWN` and `MANUAL_REVIEW` are valid outcomes.
-The report is a review checkpoint, not authorization to generate source or
-migrate tests.
+The extension report is a review checkpoint on its own — but, unlike a plain
+analysis report, it can optionally be turned into a framework-native
+scaffold via `python -m framework extension scaffold` (see "Framework-native
+scaffolding" below), always behind an explicit `--approve` gate.
 
 `python -m framework.extension analyze` supports four customer choices via
 `--mode`, each a strict superset of the previous:
@@ -39,6 +43,41 @@ records method, path, status, and query-parameter/JSON-body **key names**
 only — never a header, query value, or body value — so a discovery report
 stays safe to persist even against an authenticated session carrying real
 customer data.
+
+### Framework-native scaffolding
+
+`python -m framework extension scaffold` turns an extension report into
+actual draft source files — but only for items classified `CREATE_NEW`/
+`EXTEND_EXISTING`, only in the existing repository's own detected
+language/framework/test-runner style (`framework.extension.target`
+supports Java+Selenium+TestNG, Java+Selenium+JUnit, Python+pytest+
+Playwright, TypeScript+Playwright, and Robot Framework — every other
+combination, e.g. C#, falls back to a README-only plan rather than
+fabricating code nobody asked for). A `REUSE_EXISTING` item is never
+scaffolded, and an already-reusable capability is referenced by name and
+source file in a comment, never duplicated as a second implementation
+(no second `ApiClient`, `DatabaseManager`, or `DataComparator`).
+
+Two safety mechanisms gate every write:
+
+- **Human approval** — `scaffold` always computes and prints the plan
+  (files, reused capabilities, manual-review items); nothing is written
+  to disk unless `--approve` is also passed. `--dry-run` always previews,
+  even alongside `--approve`.
+- **Project-root containment** — `--output-dir` is resolved against
+  `framework.project_root.PROJECT_ROOT` and rejected if it would land
+  outside it (an accidental absolute path, a `..`-escaping relative path,
+  or a page-title-derived filename attempting traversal); a conflicting
+  path at the target location fails the *entire* write unless
+  `--overwrite` is given — never a silent partial overwrite of customer
+  files.
+
+Every generated file carries a `GENERATED SCAFFOLD — REVIEW REQUIRED`
+notice plus `TODO` markers wherever a locator/mapping/assertion wasn't
+itself confirmed evidence; nothing here is ever labeled production ready.
+The manifest (`extension-manifest.json`, written alongside the generated
+files) records reused capabilities, newly generated ones, and manual-review
+items — never file content, and never a raw captured value.
 
 `framework.sync` — optional (`feature_flags.framework_sync`), read-only by
 default. See [ModularArchitecture.md](ModularArchitecture.md) for how this

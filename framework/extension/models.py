@@ -132,6 +132,73 @@ class TestOpportunity(BaseModel):
     suggested_scenario_types: list[str] = Field(default_factory=list)
 
 
+class ScaffoldTarget(str, Enum):
+    """Which of the customer's own automation ecosystems generated
+    scaffold code should be written in — detected from the existing
+    framework's own `RepositoryAnalysis` (primary language + detected
+    frameworks/test runners), never guessed or defaulted to this
+    framework's own Python/pytest/Playwright stack. `UNKNOWN` is a real,
+    honest outcome (e.g. C#, Cypress-only, or an undetectable repository)
+    — the scaffold generator writes a manifest/README only for it, never
+    fabricated code in a language nobody asked for.
+    """
+
+    JAVA_SELENIUM_TESTNG = "java_selenium_testng"
+    JAVA_SELENIUM_JUNIT = "java_selenium_junit"
+    PYTHON_PYTEST_PLAYWRIGHT = "python_pytest_playwright"
+    TYPESCRIPT_PLAYWRIGHT = "typescript_playwright"
+    ROBOT_FRAMEWORK = "robot_framework"
+    UNKNOWN = "unknown"
+
+
+class ScaffoldFileKind(str, Enum):
+    PAGE_OBJECT = "page_object"
+    COMPONENT = "component"
+    TEST = "test"
+    RESOURCE = "resource"
+    README = "readme"
+
+
+class ScaffoldFile(BaseModel):
+    """One file the scaffold generator proposes writing — a plan entry,
+    not yet a write. `relative_path` is always relative to the scaffold
+    output directory (never absolute, never containing `..`) — enforced
+    by `framework.extension.paths` before anything reaches disk.
+    """
+
+    relative_path: str
+    kind: ScaffoldFileKind
+    content: str
+
+
+class ScaffoldManifest(BaseModel):
+    """The human-reviewable record of one scaffold run — deliberately
+    excludes file *content* (that's in the files themselves) so this stays
+    small and diffable. Never claims the generated code is "production
+    ready"; `confidence` is always an honest, review-required label (see
+    `framework.extension.scaffold._SCAFFOLD_NOTICE`). Contains no secrets:
+    every field here is a path, a capability name, or a classification
+    label, never a captured value.
+    """
+
+    generated_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
+    existing_framework_source: str = ""
+    new_ui_source: str = ""
+    target: ScaffoldTarget = ScaffoldTarget.UNKNOWN
+    confidence: str = "scaffold — review required, not executed or validated"
+    files: list[str] = Field(default_factory=list)
+    reused_capabilities: list[str] = Field(default_factory=list)
+    newly_generated_capabilities: list[str] = Field(default_factory=list)
+    manual_review_items: list[str] = Field(default_factory=list)
+
+    def save(self, path: str | Path) -> None:
+        Path(path).write_text(self.model_dump_json(indent=2), encoding="utf-8")
+
+    @classmethod
+    def load(cls, path: str | Path) -> ScaffoldManifest:
+        return cls.model_validate_json(Path(path).read_text(encoding="utf-8"))
+
+
 class ExtensionReport(BaseModel):
     """The full output of the extension-analysis pipeline — the
     "what already exists, what does the new UI need, what can be reused"

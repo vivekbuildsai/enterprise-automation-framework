@@ -269,3 +269,23 @@ def build_test_opportunities(
             )
         )
     return opportunities
+
+
+def format_reuse_matrix(items: list[ExtensionItem]) -> str:
+    """Renders the human-readable "Capability / Status" table a customer
+    actually reads — the same "Capability | Status" shape the governing
+    worked example uses. Shared by `python -m framework.extension analyze`'s
+    console output and the scaffold manifest's companion text, so the two
+    never drift apart (same "one formatter, multiple callers" precedent as
+    `framework.sync.test_inventory.format_inventory`).
+    """
+    if not items:
+        return "REUSE MATRIX\n\n(no extension items)"
+
+    subject_width = max(len("Capability"), *(len(item.subject) for item in items))
+    header = f"{'Capability':<{subject_width}}  Status"
+    separator = "-" * (subject_width + 2 + max(len("Status"), 15))
+    lines = ["REUSE MATRIX", "", header, separator]
+    for item in items:
+        lines.append(f"{item.subject:<{subject_width}}  {item.classification.value.upper()}")
+    return "\n".join(lines)
