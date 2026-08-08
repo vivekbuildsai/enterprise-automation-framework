@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import re
 from functools import lru_cache
-from pathlib import Path
 from typing import Any
 
 import yaml
@@ -12,8 +11,16 @@ from dotenv import dotenv_values, load_dotenv
 from framework.config.models import EnvironmentSettings
 from framework.enums.environment import Environment
 from framework.exceptions import ConfigurationError
+from framework.project_root import PROJECT_ROOT
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+# Re-bound as a module attribute (not used directly) so
+# `monkeypatch.setattr(settings_module, "_PROJECT_ROOT", tmp_path)` in
+# tests/config/unit/test_settings.py keeps working unchanged — every
+# function below reads `_PROJECT_ROOT`/`_CONFIG_DIR` from this module's own
+# namespace at call time, not from `framework.project_root` directly. See
+# `framework.project_root` for the actual resolution logic (the one
+# canonical resolver every path-sensitive module shares).
+_PROJECT_ROOT = PROJECT_ROOT
 _CONFIG_DIR = _PROJECT_ROOT / "config" / "environments"
 _ENV_VAR_PATTERN = re.compile(r"\$\{([A-Za-z0-9_]+)(?::-(.*?))?\}")
 

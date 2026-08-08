@@ -1,6 +1,8 @@
 """CLI for the Application Discovery Engine.
 
-    poetry run python -m framework.discovery ui <url> --report report.json [--crawl --max-pages 5]
+    poetry run python -m framework.discovery ui <url> --report report.json [--crawl] \\
+        [--max-pages 5] \\
+        [--capture-network] [--network-url-pattern "**/*"]
     poetry run python -m framework.discovery api <openapi.json> --report report.json
     poetry run python -m framework.discovery db <db_key> --env dev --report report.json
     poetry run python -m framework.discovery generate --report report.json --output-dir generated/
@@ -62,9 +64,20 @@ def _cmd_ui(args: argparse.Namespace) -> None:
         page = browser.new_page()
         engine = UIDiscoveryEngine(page)
         pages = (
-            engine.crawl(args.url, max_pages=args.max_pages)
+            engine.crawl(
+                args.url,
+                max_pages=args.max_pages,
+                capture_network=args.capture_network,
+                network_url_pattern=args.network_url_pattern,
+            )
             if args.crawl
-            else [engine.discover_page(args.url)]
+            else [
+                engine.discover_page(
+                    args.url,
+                    capture_network=args.capture_network,
+                    network_url_pattern=args.network_url_pattern,
+                )
+            ]
         )
         browser.close()
 
@@ -151,6 +164,19 @@ def main(argv: list[str] | None = None) -> int:
     ui_parser.add_argument("--crawl", action="store_true")
     ui_parser.add_argument("--max-pages", type=int, default=5)
     ui_parser.add_argument("--headed", action="store_true")
+    ui_parser.add_argument(
+        "--capture-network",
+        action="store_true",
+        help=(
+            "Opt in to shape-only network capture for extension/reuse analysis. "
+            "Reports retain paths, methods, statuses, and JSON key names—never values or headers."
+        ),
+    )
+    ui_parser.add_argument(
+        "--network-url-pattern",
+        default="**/*",
+        help="Playwright URL pattern used only with --capture-network (default: **/*)",
+    )
     ui_parser.set_defaults(func=_cmd_ui)
 
     api_parser = subparsers.add_parser("api", help="Discover endpoints from an OpenAPI spec file")

@@ -1,0 +1,7 @@
+{
+  "name": "sample-mixed-ui",
+  "version": "1.0.0",
+  "devDependencies": {
+    "@playwright/test": "^1.47.0"
+  }
+}

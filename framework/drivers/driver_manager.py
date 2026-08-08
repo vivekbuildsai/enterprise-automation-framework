@@ -9,10 +9,10 @@ from playwright.sync_api import Browser, BrowserContext, Page, Playwright, sync_
 from framework.config.models import BrowserConfig
 from framework.drivers.browser_factory import BrowserFactory
 from framework.logger import get_logger
+from framework.project_root import PROJECT_ROOT
 
 _logger = get_logger("DriverManager")
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
-_ARTIFACTS_DIR = _PROJECT_ROOT / "artifacts"
+_ARTIFACTS_DIR = PROJECT_ROOT / "artifacts"
 
 
 def _safe_name(name: str) -> str:
@@ -20,14 +20,23 @@ def _safe_name(name: str) -> str:
 
 
 class DriverManager:
-    """Owns the Playwright lifecycle for a single test: launches the browser,
-    opens an isolated context/page, and captures trace/video/screenshot/HAR
-    artifacts only when the test actually failed — keeping green runs cheap
-    while still supporting Trace Viewer debugging on failures.
+    """Owns the Playwright lifecycle for a single test: opens an isolated
+    context/page on a `Browser` (its own, or a shared one handed in by the
+    caller) and captures trace/video/screenshot/HAR artifacts only when the
+    test actually failed — keeping green runs cheap while still supporting
+    Trace Viewer debugging on failures.
 
-    One instance per test (see `framework/fixtures/driver_fixtures.py`), which
-    is what makes `pytest-xdist -n auto` parallel-safe: each worker gets its
-    own browser + context, never sharing state across tests.
+    One instance per test (see `framework/fixtures/driver_fixtures.py`).
+    `pytest-xdist -n auto` parallel-safety comes from each *worker* owning
+    its own browser process (a `session`-scoped fixture is per-worker, not
+    global) — it was never about needing a fresh browser *per test*, only a
+    fresh, isolated `BrowserContext` per test, which Playwright already
+    guarantees (separate cookies/storage/cache) whether or not the
+    underlying browser process is shared. Pass `browser=` to reuse an
+    already-running one (the common case via the `page`/`authenticated_page`
+    fixtures); omit it to launch and own a dedicated browser+Playwright for
+    this instance's lifetime (standalone/backward-compatible usage) —
+    `finalize()` only closes what this instance itself launched.
     """
 
     def __init__(
@@ -35,18 +44,21 @@ class DriverManager:
         config: BrowserConfig,
         test_name: str,
         storage_state: Path | None = None,
+        browser: Browser | None = None,
     ) -> None:
         self._config = config
         self._test_name = _safe_name(test_name)
         self._storage_state = storage_state
         self._playwright: Playwright | None = None
-        self._browser: Browser | None = None
+        self._browser: Browser | None = browser
+        self._owns_browser = browser is None
         self._context: BrowserContext | None = None
         self._page: Page | None = None
 
     def start(self) -> Page:
-        self._playwright = sync_playwright().start()
-        self._browser = BrowserFactory.launch(self._playwright, self._config)
+        if self._browser is None:
+            self._playwright = sync_playwright().start()
+            self._browser = BrowserFactory.launch(self._playwright, self._config)
 
         context_kwargs: dict[str, object] = {
             "viewport": {
@@ -92,10 +104,13 @@ class DriverManager:
             with contextlib.suppress(Exception):
                 Path(video.path()).unlink(missing_ok=True)
 
-        if self._browser:
-            self._browser.close()
-        if self._playwright:
-            self._playwright.stop()
+        # A shared/injected browser outlives this test — only close what this
+        # instance itself launched (standalone usage with no `browser=` arg).
+        if self._owns_browser:
+            if self._browser:
+                self._browser.close()
+            if self._playwright:
+                self._playwright.stop()
 
         _logger.info(
             f"Driver session finalized for test '{self._test_name}' (failed={test_failed})"

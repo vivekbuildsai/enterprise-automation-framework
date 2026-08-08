@@ -47,6 +47,15 @@ class NetworkInterceptor:
         self._page = page
         self._url_pattern = url_pattern
         self.captured: list[CapturedExchange] = []
+        # Compiled once per interceptor instance rather than on every
+        # `_on_response` call — a busy page can emit hundreds of responses
+        # while attached, and the pattern never changes for the lifetime
+        # of one interceptor.
+        self._compiled_pattern: re.Pattern[str] | None = (
+            None
+            if url_pattern in ("**/*", "*", "")
+            else re.compile(re.escape(url_pattern).replace(r"\*\*", ".*").replace(r"\*", "[^/]*"))
+        )
 
     def _on_response(self, response: Response) -> None:
         if not response.url or not self._url_matches(response.url):
@@ -68,12 +77,11 @@ class NetworkInterceptor:
         self.captured.append(exchange)
 
     def _url_matches(self, url: str) -> bool:
-        if self._url_pattern in ("**/*", "*", ""):
+        if self._compiled_pattern is None:
             return True
-        pattern = re.escape(self._url_pattern).replace(r"\*\*", ".*").replace(r"\*", "[^/]*")
         return (
-            re.search(pattern, url) is not None
-            or re.search(pattern, urlparse(url).path) is not None
+            self._compiled_pattern.search(url) is not None
+            or self._compiled_pattern.search(urlparse(url).path) is not None
         )
 
     def __enter__(self) -> NetworkInterceptor:

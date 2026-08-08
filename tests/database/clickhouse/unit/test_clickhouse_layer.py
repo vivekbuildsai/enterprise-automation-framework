@@ -80,6 +80,13 @@ class TestClickHouseClient:
 
 
 class TestClickHouseQueryExecutor:
+    @pytest.fixture(autouse=True)
+    def _no_real_backoff(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The retry tests below assert attempt counts / final outcome, not
+        # tenacity's actual exponential-backoff timing — real sleeps only
+        # add wall-clock time without covering anything additional.
+        monkeypatch.setattr("time.sleep", lambda _seconds: None)
+
     def test_query_returns_named_result_dicts(self) -> None:
         client = FakeClient(rows=[{"name": "max_retries", "value": "3"}])
         executor = ClickHouseQueryExecutor(client)  # type: ignore[arg-type]

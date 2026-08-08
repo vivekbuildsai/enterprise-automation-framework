@@ -1,16 +1,15 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import yaml
 
 from framework.enums import Environment
 from framework.exceptions import TestDataError
+from framework.project_root import PROJECT_ROOT
 from framework.utilities.test_data_loader import TestDataLoader
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]
-_TESTDATA_DIR = _PROJECT_ROOT / "data" / "testdata"
+_TESTDATA_DIR = PROJECT_ROOT / "data" / "testdata"
 _SHARED_DIR = "shared"
 _SCENARIOS_DIR = "scenarios"
 

@@ -16,6 +16,7 @@ def test_no_args_prints_help_and_exits_zero(capsys) -> None:
     assert exit_code == 0
     assert "discover" in captured.out
     assert "sync" in captured.out
+    assert "extension" in captured.out
 
 
 def test_unknown_command_exits_nonzero(capsys) -> None:
@@ -91,6 +92,36 @@ class TestValidate:
 
         assert exit_code == 0
 
+    def test_timing_flag_prints_a_phase_summary_to_stderr_not_stdout(
+        self, tmp_path, capsys
+    ) -> None:
+        expected = tmp_path / "expected.json"
+        actual = tmp_path / "actual.json"
+        expected.write_text(json.dumps({"total": 100}))
+        actual.write_text(json.dumps({"total": 100}))
+
+        exit_code = main(
+            ["validate", "--expected", str(expected), "--actual", str(actual), "--timing"]
+        )
+        captured = capsys.readouterr()
+
+        assert exit_code == 0
+        assert "MATCH" in captured.out
+        assert "RUN-" not in captured.out  # timing summary must not pollute stdout
+        assert "RUN-" in captured.err
+        assert "Total" in captured.err
+
+    def test_without_timing_flag_stderr_stays_empty(self, tmp_path, capsys) -> None:
+        expected = tmp_path / "expected.json"
+        actual = tmp_path / "actual.json"
+        expected.write_text(json.dumps({"total": 100}))
+        actual.write_text(json.dumps({"total": 100}))
+
+        main(["validate", "--expected", str(expected), "--actual", str(actual)])
+        captured = capsys.readouterr()
+
+        assert captured.err == ""
+
 
 class TestReport:
     def test_missing_allure_binary_reports_a_clear_error(self, monkeypatch, capsys) -> None:
@@ -127,3 +158,11 @@ class TestDelegation:
 
         assert exc_info.value.code == 0
         assert "Existing Framework Sync" in captured.out
+
+    def test_extension_delegates_to_the_extension_cli(self, capsys) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            main(["extension", "--help"])
+        captured = capsys.readouterr()
+
+        assert exc_info.value.code == 0
+        assert "new UI + existing API + existing database" in captured.out

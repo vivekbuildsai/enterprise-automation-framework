@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from framework.exceptions import ConfigurationError
+from framework.project_root import PROJECT_ROOT
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
-_DASHBOARDS_DIR = _PROJECT_ROOT / "config" / "dashboards"
+_DASHBOARDS_DIR = PROJECT_ROOT / "config" / "dashboards"
 
 
 class DateRangeConfig(BaseModel):

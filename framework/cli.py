@@ -2,12 +2,14 @@
 
     poetry run python -m framework discover ...   # Application Discovery (optional)
     poetry run python -m framework sync ...        # Existing Framework Sync (optional)
+    poetry run python -m framework extension ...   # New-UI extension/reuse analysis (optional)
     poetry run python -m framework validate --expected e.json --actual a.json
     poetry run python -m framework report generate
 
-This is a thin dispatcher, not a new layer of logic: `discover`/`sync`
-delegate straight to their own independently-runnable
-`python -m framework.discovery`/`python -m framework.sync` CLIs.
+This is a thin dispatcher, not a new layer of logic: `discover`/`sync`/
+`extension` delegate straight to their own independently-runnable
+`python -m framework.discovery`/`python -m framework.sync`/
+`python -m framework.extension` CLIs.
 `validate`/`report` are small, self-contained wrappers around existing
 core building blocks (`DataComparator`, the `allure` CLI) — core
 capabilities, always available, no feature flag.
@@ -33,15 +35,23 @@ from framework.cli_common import run_command
 
 def _cmd_validate(args: argparse.Namespace) -> int:
     from framework.database.utilities.comparison import DataComparator
+    from framework.telemetry import RunTimer
 
-    expected = json.loads(Path(args.expected).read_text(encoding="utf-8"))
-    actual = json.loads(Path(args.actual).read_text(encoding="utf-8"))
-    fields = args.fields.split(",") if args.fields else None
+    timer = RunTimer()
 
-    result = DataComparator.compare(
-        expected, actual, left_label="expected", right_label="actual", fields=fields
-    )
+    with timer.phase("Load input files"):
+        expected = json.loads(Path(args.expected).read_text(encoding="utf-8"))
+        actual = json.loads(Path(args.actual).read_text(encoding="utf-8"))
+        fields = args.fields.split(",") if args.fields else None
+
+    with timer.phase("Comparison"):
+        result = DataComparator.compare(
+            expected, actual, left_label="expected", right_label="actual", fields=fields
+        )
+
     print(result.to_report())
+    if args.timing:
+        print(timer.summary(), file=sys.stderr)
     return 0 if result.matched else 1
 
 
@@ -69,6 +79,28 @@ def _cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+_DELEGATED_COMMANDS = ("discover", "sync", "extension")
+
+
+def _delegate(command: str, rest: list[str]) -> int:
+    """`discover`/`sync`/`extension` are each independently-runnable CLIs
+    in their own right — this only forwards argv, it never re-parses or
+    re-interprets it.
+    """
+    if command == "discover":
+        from framework.discovery.__main__ import main as discovery_main
+
+        return discovery_main(rest)
+    if command == "sync":
+        from framework.sync.__main__ import main as sync_main
+
+        return sync_main(rest)
+
+    from framework.extension.__main__ import main as extension_main
+
+    return extension_main(rest)
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(argv if argv is not None else sys.argv[1:])
     if not argv or argv[0] in ("-h", "--help"):
@@ -77,15 +109,8 @@ def main(argv: list[str] | None = None) -> int:
 
     command, rest = argv[0], argv[1:]
 
-    if command == "discover":
-        from framework.discovery.__main__ import main as discovery_main
-
-        return discovery_main(rest)
-
-    if command == "sync":
-        from framework.sync.__main__ import main as sync_main
-
-        return sync_main(rest)
+    if command in _DELEGATED_COMMANDS:
+        return _delegate(command, rest)
 
     if command == "validate":
         parser = argparse.ArgumentParser(prog="python -m framework validate")
@@ -95,6 +120,11 @@ def main(argv: list[str] | None = None) -> int:
             "--fields",
             default=None,
             help="Comma-separated field list (default: keys present in both files)",
+        )
+        parser.add_argument(
+            "--timing",
+            action="store_true",
+            help="Print a phase-timing summary to stderr (load/compare durations + a run ID)",
         )
         return run_command(_cmd_validate, parser.parse_args(rest))
 

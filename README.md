@@ -25,13 +25,17 @@ independently optional (off by default — see
 | Capability | What it does | Optional? |
 |---|---|---|
 | **Core Automation** | Playwright UI + REST API clients, Page Objects/Components, Allure/HTML reporting | No |
-| **Data Validation** | Network/JSON-RPC capture → extraction → database comparison, with real numeric tolerance (`DataComparator` + `Tolerance`) | No |
+| **Data Validation** | End-to-end UI → API/network → Database validation with real numeric tolerance (`DataComparator` + `Tolerance`, dispatched by `ValidationFacade`) | No |
 | **Application Discovery** | Evidence-only UI/API/DB introspection + code scaffolding (`framework.discovery`) | Yes |
-| **Framework Sync** | Read-only analysis + migration scaffolding for an *existing* automation repo (`framework.sync`) | Yes |
+| **Multi-Language & Multi-Framework Framework Sync** | Read-only analysis + migration scaffolding for an *existing* automation repo — Java, TypeScript/JavaScript, Python, C#, and Robot Framework (`framework.sync`) | Yes |
+| **New UI Extension Analysis** | Reuse-first plan for a new UI on an existing framework/API/DB (`framework.extension`) | Yes |
 | **AI Assistance** | Optional, provider-agnostic recommendation layer over Discovery/Sync output (`framework.ai`) | Yes |
 
-Five runnable examples cover all five — see [`examples/`](examples/) and
-run them yourself: `poetry run pytest examples/ -v`.
+**The framework's key differentiator is end-to-end UI + API + Database
+validation** — see [`examples/data_validation/`](examples/data_validation/)
+for two runnable, executable proofs of it. Six runnable examples in total
+cover all five capabilities — see [`examples/`](examples/) and run them
+yourself: `poetry run pytest examples/ -v`.
 
 ## Key capabilities
 
@@ -62,9 +66,11 @@ run them yourself: `poetry run pytest examples/ -v`.
 - **Optional, independently-enabled capabilities** (off by default; core
   automation runs identically with all of them disabled): **Application
   Discovery** (`framework.discovery` — evidence-only UI/API/DB
-  introspection + code scaffolding), **Existing Framework Sync**
-  (`framework.sync` — read-only analysis and migration scaffolding for an
-  existing automation repo), **AI Assistance** (`framework.ai` — pluggable,
+  introspection + code scaffolding), **Multi-Language & Multi-Framework
+  Framework Sync** (`framework.sync` — read-only analysis and migration
+  scaffolding for an existing automation repo in Java, TypeScript/
+  JavaScript, Python, C#, or Robot Framework), **AI Assistance**
+  (`framework.ai` — pluggable,
   provider-agnostic, disabled by default). See
   [Modular capabilities](#modular-capabilities) below.
 
@@ -79,7 +85,7 @@ construction, not just by convention. Optional capabilities:
 | Capability | Package | Feature flag | Doc |
 |---|---|---|---|
 | Application Discovery | `framework.discovery` | `discovery` | [docs/ModularArchitecture.md](docs/ModularArchitecture.md#application-discovery-frameworkdiscovery) |
-| Existing Framework Sync | `framework.sync` | `framework_sync` | [docs/FrameworkSync.md](docs/FrameworkSync.md) |
+| Multi-Language & Multi-Framework Framework Sync | `framework.sync` | `framework_sync` | [docs/FrameworkSync.md](docs/FrameworkSync.md) |
 | AI Assistance | `framework.ai` | `ai_assistance` | [docs/ModularArchitecture.md](docs/ModularArchitecture.md#ai-assistance-frameworkai) |
 
 None of these are required for core UI/API/database automation to work,
@@ -95,6 +101,8 @@ poetry run python -m framework discover recommend --report report.json  # option
 poetry run python -m framework sync analyze <source> --report analysis.json
 poetry run python -m framework sync recommend --report analysis.json    # optional AI layer
 poetry run python -m framework sync scaffold --report analysis.json
+poetry run python -m framework discover ui <new-ui-url> --capture-network --report new-ui.json
+poetry run python -m framework extension analyze --discovery-report new-ui.json --sync-report analysis.json --output extension-plan.json
 poetry run python -m framework validate --expected e.json --actual a.json
 poetry run python -m framework report generate
 ```
@@ -256,6 +264,12 @@ poetry run python -m playwright install chromium firefox webkit
 cp .env.example .env
 ```
 
+The above is for working *inside* this repo. To use the framework as a
+dependency from your **own** separate project — install, fixtures, first
+Page Object, first test, through UI+API+DB validation and analyzing an
+existing framework — see
+[docs/GettingStarted.md § Using this framework from your own project](docs/GettingStarted.md#using-this-framework-from-your-own-project).
+
 ## Configuration
 
 Layered, environment-variable-driven, never hardcoded:
@@ -410,16 +424,38 @@ Postgres/MySQL containers can reproduce this pipeline.
 
 ## Example workflow
 
-Five small, **executable** examples live in [`examples/`](examples/) — real
+Six small, **executable** examples live in [`examples/`](examples/) — real
 framework APIs, not illustrative pseudocode. Run all of them:
 
 ```bash
 poetry run pytest examples/ -v
 ```
 
-The end-to-end pipeline this framework is built around — UI → network →
-data extraction → database → tolerance validation → report — is
-[`examples/data_validation/test_widget_vs_database_example.py`](examples/data_validation/test_widget_vs_database_example.py):
+**End-to-end UI + API + Database validation** — this framework's key
+differentiator — is
+[`examples/data_validation/test_ui_api_database_validation_example.py`](examples/data_validation/test_ui_api_database_validation_example.py),
+using `ValidationFacade` to dispatch a real API call and a local database
+check from one config value:
+
+```python
+facade = ValidationFacade(ValidationMode.UI_API_DATABASE)
+
+facade.verify_ui(check_ui)              # a page's displayed value
+facade.verify_api(check_api)            # GET https://dummyjson.com/users/1 — real
+facade.verify_database(check_database)  # SQLite, seeded by the example — local
+
+result = DataComparator.compare(
+    results["database"], results["ui"],
+    left_label="database", right_label="ui",
+    tolerance=Tolerance(absolute=2),
+)
+assert result.matched, result.to_report()
+```
+
+The sibling example,
+[`examples/data_validation/test_widget_vs_database_example.py`](examples/data_validation/test_widget_vs_database_example.py),
+shows the other supported path through the same differentiator — network
+interception instead of a direct API call:
 
 ```python
 with NetworkInterceptor(page, url_pattern="**/api/dashboard") as interceptor:
@@ -438,9 +474,9 @@ result = DataComparator.compare(
 assert result.matched, result.to_report()
 ```
 
-See [`examples/README.md`](examples/README.md) for what each of the five
-examples demonstrates (UI automation, this UI+data-validation pipeline,
-Framework Sync, Application Discovery, and optional AI).
+See [`examples/README.md`](examples/README.md) for what each of the six
+examples demonstrates (UI automation, this UI+API+DB / UI+network+DB
+differentiator pair, Framework Sync, Application Discovery, and optional AI).
 
 ## Future extension possibilities
 

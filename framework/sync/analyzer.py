@@ -4,8 +4,12 @@ import re
 from pathlib import Path
 
 from framework.logger import get_logger
+from framework.sync.capability_catalog import build_capability_catalog
 from framework.sync.detectors import DEFAULT_ADAPTERS, FrameworkAdapter
-from framework.sync.models import Finding, RepositoryAnalysis, RepositoryStructure
+from framework.sync.execution_model import detect_execution_model
+from framework.sync.models import Finding, RepositoryAnalysis, RepositoryStructure, RobotStructure
+from framework.sync.robot_analysis import analyze_robot_file, merge_robot_structures
+from framework.sync.test_inventory import build_inventory, extract_tests
 
 _logger = get_logger("RepositoryAnalyzer")
 
@@ -16,9 +20,15 @@ _TEXT_EXTENSIONS = {
     ".jsx",
     ".ts",
     ".tsx",
+    ".cs",
+    ".csproj",
+    ".sln",
+    ".robot",
+    ".resource",
     ".json",
     ".xml",
     ".gradle",
+    ".kts",
     ".yaml",
     ".yml",
     ".toml",
@@ -36,12 +46,20 @@ _IGNORED_DIRS = {
     "dist",
     "build",
     "target",
+    "bin",
+    "obj",
+    ".tox",
     ".idea",
     ".vscode",
     ".mypy_cache",
     ".ruff_cache",
     ".pytest_cache",
 }
+# Robot Framework is deliberately its own bucket, not folded into an
+# existing language — it's a keyword-driven automation DSL, not source
+# code in any general-purpose language (see docs/FrameworkSync.md,
+# "Multi-Language & Multi-Framework"). `.resource` files share the same
+# tabular syntax as `.robot` files, so they count toward the same bucket.
 _LANGUAGE_EXTENSIONS = {
     ".py": "Python",
     ".java": "Java",
@@ -49,10 +67,40 @@ _LANGUAGE_EXTENSIONS = {
     ".jsx": "JavaScript",
     ".ts": "TypeScript",
     ".tsx": "TypeScript",
+    ".cs": "C#",
+    ".robot": "Robot Framework",
+    ".resource": "Robot Framework",
 }
-_SOURCE_EXTENSIONS = {".py", ".java", ".js", ".jsx", ".ts", ".tsx"}
-_TEST_FILE_HINTS = ("test_", "_test.", ".spec.", "spec.", "Test.java", "Tests.java")
-_PAGE_OBJECT_HINTS = ("page.py", "Page.java", "Page.ts", "page_object", "PageObject", "Page.js")
+_SOURCE_EXTENSIONS = {".py", ".java", ".js", ".jsx", ".ts", ".tsx", ".cs", ".robot", ".resource"}
+_TEST_FILE_HINTS = (
+    "test_",
+    "_test.",
+    ".spec.",
+    "spec.",
+    "Test.java",
+    "Tests.java",
+    "Test.cs",
+    "Tests.cs",
+)
+_PAGE_OBJECT_HINTS = (
+    "page.py",
+    "Page.java",
+    "Page.ts",
+    "Page.cs",
+    "page_object",
+    "PageObject",
+    "Page.js",
+)
+_DEPENDENCY_FILE_NAMES = (
+    "requirements.txt",
+    "pyproject.toml",
+    "package.json",
+    "pom.xml",
+    "build.gradle",
+    "build.gradle.kts",
+)
+_DEPENDENCY_FILE_SUFFIXES = (".csproj", ".sln")
+_ROBOT_SUFFIXES = (".robot", ".resource")
 
 _CREDENTIAL_PATTERN = re.compile(
     r"(?i)\b(password|passwd|pwd|api[_-]?key|secret[_-]?key|access[_-]?token)\s*[=:]\s*['\"][^'\"]{3,}['\"]"
@@ -90,7 +138,25 @@ class RepositoryAnalyzer:
         ]
 
         structure = self._structure(root, files)
+        robot_structure = self._robot_structure(contents)
         findings = self._scan_findings(root, contents)
+
+        tests = extract_tests(root, contents)
+        inventory = build_inventory(
+            root,
+            contents,
+            tests,
+            robot_structure,
+            structure.page_object_like_files,
+            structure.config_files,
+        )
+        execution_model = detect_execution_model(contents)
+        capability_catalog = build_capability_catalog(
+            root,
+            contents,
+            authentication_mechanisms=inventory.authentication_mechanisms,
+            page_object_hints=_PAGE_OBJECT_HINTS,
+        )
 
         analysis = RepositoryAnalysis(
             source=source,
@@ -98,11 +164,17 @@ class RepositoryAnalyzer:
             language_breakdown=language_breakdown,
             detected_frameworks=detected,
             structure=structure,
+            robot_structure=robot_structure,
+            tests=tests,
+            inventory=inventory,
+            execution_model=execution_model,
+            capability_catalog=capability_catalog,
             findings=findings,
         )
         _logger.info(
             f"Analyzed {structure.total_files} files ({primary_language}) — "
-            f"{len(detected)} framework(s), {len(findings)} finding(s)"
+            f"{len(detected)} framework(s), {inventory.tests_detected} test(s), "
+            f"{len(findings)} finding(s)"
         )
         return analysis
 
@@ -162,10 +234,20 @@ class RepositoryAnalyzer:
             dependency_files=[
                 str(f.relative_to(root))
                 for f in files
-                if f.name
-                in ("requirements.txt", "pyproject.toml", "package.json", "pom.xml", "build.gradle")
+                if f.name in _DEPENDENCY_FILE_NAMES or f.suffix in _DEPENDENCY_FILE_SUFFIXES
             ],
         )
+
+    def _robot_structure(self, contents: dict[Path, str]) -> RobotStructure | None:
+        robot_paths = [path for path in contents if path.suffix in _ROBOT_SUFFIXES]
+        if not robot_paths:
+            return None
+
+        merged = merge_robot_structures(
+            [analyze_robot_file(contents[path]) for path in robot_paths]
+        )
+        merged.resource_file_count = sum(1 for path in robot_paths if path.suffix == ".resource")
+        return merged
 
     def _scan_findings(self, root: Path, contents: dict[Path, str]) -> list[Finding]:
         findings: list[Finding] = []

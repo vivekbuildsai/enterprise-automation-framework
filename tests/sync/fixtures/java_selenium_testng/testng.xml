@@ -1,0 +1,9 @@
+<!DOCTYPE suite SYSTEM "https://testng.org/testng-1.0.dtd">
+<suite name="SampleSuite" parallel="methods" thread-count="4">
+  <test name="LoginAndDashboard">
+    <classes>
+      <class name="com.example.automation.LoginTest"/>
+      <class name="com.example.automation.DashboardTest"/>
+    </classes>
+  </test>
+</suite>

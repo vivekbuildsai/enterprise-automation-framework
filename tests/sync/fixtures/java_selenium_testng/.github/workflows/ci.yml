@@ -1,0 +1,13 @@
+name: CI
+
+on: [push]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run tests
+        run: mvn test -Dsurefire.suiteXmlFiles=testng.xml
+      - name: Generate Allure report
+        run: allure generate allure-results --clean

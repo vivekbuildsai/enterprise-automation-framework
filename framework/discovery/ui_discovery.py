@@ -1,11 +1,19 @@
 from __future__ import annotations
 
-from urllib.parse import urlparse
+import json
+from typing import Any, TypedDict
+from urllib.parse import parse_qs, urlparse
 
-from playwright.sync_api import ElementHandle, Page
+from playwright.sync_api import Page
 
-from framework.discovery.models import DiscoveredElement, DiscoveredLocator, DiscoveredPage
+from framework.discovery.models import (
+    DiscoveredElement,
+    DiscoveredLocator,
+    DiscoveredNetworkCall,
+    DiscoveredPage,
+)
 from framework.logger import get_logger
+from framework.network.interceptor import CapturedExchange, NetworkInterceptor
 
 _logger = get_logger("UIDiscoveryEngine")
 
@@ -21,6 +29,90 @@ _IMPLICIT_ROLES = {
     "textarea": "textbox",
     "input": "textbox",
 }
+
+# Reads every attribute `_describe` needs, for every matched element, in one
+# browser-side pass — replaces what used to be ~9 separate Playwright IPC
+# round trips *per element* (evaluate/get_attribute/inner_text calls) with
+# exactly one round trip for the whole page. Only raw DOM data crosses the
+# JS/Python boundary here; the locator-priority *decision* (`_best_locator`)
+# stays pure Python, unchanged, so this never re-implements framework
+# semantics in JavaScript — it only relocates where the same raw facts are
+# read from.
+_EXTRACT_ELEMENTS_JS = """
+els => els.map(el => {
+    const tag = el.tagName.toLowerCase();
+    let labelText = null;
+    if (el.id) {
+        const label = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+        labelText = label ? label.textContent.trim() : null;
+    }
+    return {
+        tag,
+        testId: el.getAttribute('data-testid') || el.getAttribute('data-test-id'),
+        role: el.getAttribute('role'),
+        ariaLabel: el.getAttribute('aria-label'),
+        text: (el.innerText || '').trim().slice(0, 120),
+        elementId: el.id || null,
+        nameAttr: el.getAttribute('name'),
+        labelText,
+        type: el.getAttribute('type'),
+        href: el.getAttribute('href'),
+        placeholder: el.getAttribute('placeholder'),
+    };
+})
+"""
+
+
+def _json_shape(value: Any, *, _prefix: str = "") -> list[str]:
+    """Recursively collects JSON key *names* only, as dotted paths for
+    nested objects — never a value. A JSON array is walked via its first
+    element only (array items normally share one shape); a scalar, empty
+    list, or `None` contributes nothing further. This is the "shape, never
+    the value" rule `DiscoveredNetworkCall` depends on to stay safe to
+    persist even when the real body carried PII or secrets.
+    """
+    if isinstance(value, dict):
+        keys: list[str] = []
+        for key, nested in value.items():
+            path = f"{_prefix}.{key}" if _prefix else key
+            keys.append(path)
+            keys.extend(_json_shape(nested, _prefix=path))
+        return keys
+    if isinstance(value, list) and value:
+        return _json_shape(value[0], _prefix=_prefix)
+    return []
+
+
+def _to_discovered_network_call(exchange: CapturedExchange) -> DiscoveredNetworkCall:
+    parsed = urlparse(exchange.url)
+    request_body_keys: list[str] = []
+    if exchange.request_body:
+        try:
+            request_body_keys = _json_shape(json.loads(exchange.request_body))
+        except (ValueError, TypeError):
+            request_body_keys = []
+    return DiscoveredNetworkCall(
+        method=exchange.method,
+        path=parsed.path,
+        status=exchange.status,
+        query_param_names=sorted(parse_qs(parsed.query).keys()),
+        request_body_keys=request_body_keys,
+        response_body_keys=_json_shape(exchange.response_json),
+    )
+
+
+class _RawElement(TypedDict):
+    tag: str
+    testId: str | None
+    role: str | None
+    ariaLabel: str | None
+    text: str
+    elementId: str | None
+    nameAttr: str | None
+    labelText: str | None
+    type: str | None
+    href: str | None
+    placeholder: str | None
 
 
 class UIDiscoveryEngine:
@@ -39,27 +131,75 @@ class UIDiscoveryEngine:
     accessible name, no id/name attribute) is dropped rather than emitted
     with a guessed `nth-child`/xpath-position selector — the same
     "never invent a locator" rule the rest of this framework follows.
+
+    Network activity capture is opt-in (`capture_network=True`) and off by
+    default, so existing DOM-only callers see no behavior change. When
+    enabled, captured exchanges are recorded as shape-only
+    `DiscoveredNetworkCall`s — method, path, status, and key *names* only,
+    never request/response values — so a discovery report stays safe to
+    persist even against an authenticated session carrying real data.
     """
 
     def __init__(self, page: Page) -> None:
         self._page = page
 
-    def discover_page(self, url: str | None = None) -> DiscoveredPage:
-        if url:
-            self._page.goto(url)
-        self._page.wait_for_load_state("domcontentloaded")
+    def discover_page(
+        self,
+        url: str | None = None,
+        *,
+        capture_network: bool = False,
+        network_url_pattern: str = "**/*",
+    ) -> DiscoveredPage:
+        """`capture_network=False` (the default) preserves the original
+        DOM-only behavior exactly — no listener is attached, so existing
+        callers see zero change. Opting in reuses `NetworkInterceptor`
+        (the same capture mechanism the UI-vs-database validation pipeline
+        already relies on) rather than re-implementing response capture;
+        exchanges are converted to shape-only `DiscoveredNetworkCall`s (see
+        `_to_discovered_network_call`) before ever reaching the report.
+        """
+        if not capture_network:
+            if url:
+                self._page.goto(url)
+            self._page.wait_for_load_state("domcontentloaded")
+            return self._extract_page(network_calls=[])
 
-        elements: list[DiscoveredElement] = []
-        for handle in self._page.query_selector_all(_INTERACTIVE_SELECTOR):
-            element = self._describe(handle)
-            if element is not None:
-                elements.append(element)
+        with NetworkInterceptor(self._page, url_pattern=network_url_pattern) as interceptor:
+            if url:
+                self._page.goto(url)
+            self._page.wait_for_load_state("domcontentloaded")
+            self._page.wait_for_load_state("networkidle")
+        network_calls = [_to_discovered_network_call(e) for e in interceptor.captured]
+        return self._extract_page(network_calls=network_calls)
 
-        page = DiscoveredPage(url=self._page.url, title=self._page.title(), elements=elements)
-        _logger.info(f"Discovered {len(elements)} interactive elements on {page.url}")
+    def _extract_page(self, *, network_calls: list[DiscoveredNetworkCall]) -> DiscoveredPage:
+        raw_elements: list[_RawElement] = self._page.eval_on_selector_all(
+            _INTERACTIVE_SELECTOR, _EXTRACT_ELEMENTS_JS
+        )
+        elements = [
+            described for raw in raw_elements if (described := self._describe(raw)) is not None
+        ]
+
+        page = DiscoveredPage(
+            url=self._page.url,
+            title=self._page.title(),
+            elements=elements,
+            network_calls=network_calls,
+        )
+        _logger.info(
+            f"Discovered {len(elements)} interactive elements and "
+            f"{len(network_calls)} network call(s) on {page.url}"
+        )
         return page
 
-    def crawl(self, start_url: str, *, max_pages: int = 5) -> list[DiscoveredPage]:
+    def crawl(
+        self,
+        start_url: str,
+        *,
+        max_pages: int = 5,
+        capture_network: bool = False,
+        network_url_pattern: str = "**/*",
+    ) -> list[DiscoveredPage]:
         """Small, bounded, same-origin breadth-first crawl — not a
         general-purpose spider. Stops at `max_pages`. Only run this
         against an application you are authorized to test; it follows
@@ -77,7 +217,9 @@ class UIDiscoveryEngine:
                 continue
             visited.add(url)
 
-            page = self.discover_page(url)
+            page = self.discover_page(
+                url, capture_network=capture_network, network_url_pattern=network_url_pattern
+            )
             pages.append(page)
             if len(pages) >= max_pages:
                 break
@@ -89,15 +231,15 @@ class UIDiscoveryEngine:
 
         return pages
 
-    def _describe(self, handle: ElementHandle) -> DiscoveredElement | None:
-        tag: str = handle.evaluate("el => el.tagName.toLowerCase()")
-        test_id = handle.get_attribute("data-testid") or handle.get_attribute("data-test-id")
-        role = handle.get_attribute("role") or _IMPLICIT_ROLES.get(tag)
-        aria_label = handle.get_attribute("aria-label")
-        text = (handle.inner_text() or "").strip()[:120]
-        element_id = handle.get_attribute("id")
-        name_attr = handle.get_attribute("name")
-        label_text = self._associated_label_text(handle)
+    def _describe(self, raw: _RawElement) -> DiscoveredElement | None:
+        tag = raw["tag"]
+        test_id = raw["testId"]
+        role = raw["role"] or _IMPLICIT_ROLES.get(tag)
+        aria_label = raw["ariaLabel"]
+        text = raw["text"]
+        element_id = raw["elementId"]
+        name_attr = raw["nameAttr"]
+        label_text = raw["labelText"]
 
         # Visible text is only a genuine accessible name for buttons/links —
         # real ARIA default-name computation. For form controls (select,
@@ -119,30 +261,12 @@ class UIDiscoveryEngine:
         if locator is None:
             return None
 
-        attributes = {
-            attr: value
-            for attr in ("type", "href", "placeholder")
-            if (value := handle.get_attribute(attr))
+        attributes: dict[str, Any] = {
+            attr: value for attr in ("type", "href", "placeholder") if (value := raw.get(attr))
         }
         return DiscoveredElement(
             tag=tag, element_type=role or tag, text=text, locator=locator, attributes=attributes
         )
-
-    @staticmethod
-    def _associated_label_text(handle: ElementHandle) -> str | None:
-        """A `<label for="...">` pointing at this element's `id` — a
-        genuinely stable, human-meaningful locator source
-        (`Locators.label()` -> Playwright's `get_by_label()`), ranked
-        above a bare CSS id selector in `_best_locator`.
-        """
-        text: str | None = handle.evaluate(
-            """el => {
-                if (!el.id) return null;
-                const label = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
-                return label ? label.textContent.trim() : null;
-            }"""
-        )
-        return text or None
 
     @staticmethod
     def _best_locator(

@@ -64,6 +64,13 @@ class TestApiClientVerbs:
 @pytest.mark.api
 @pytest.mark.regression
 class TestApiClientRetry:
+    @pytest.fixture(autouse=True)
+    def _no_real_backoff(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # These tests assert retry *behavior* (attempt counts, final status),
+        # not tenacity's actual exponential-backoff timing — real sleeps here
+        # only make the suite slower without covering anything additional.
+        monkeypatch.setattr("time.sleep", lambda _seconds: None)
+
     def test_get_retries_on_503_then_succeeds(self) -> None:
         responses = iter(
             [httpx.Response(503), httpx.Response(503), httpx.Response(200, json={"ok": True})]

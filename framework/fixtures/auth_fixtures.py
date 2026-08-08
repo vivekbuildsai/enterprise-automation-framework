@@ -4,14 +4,13 @@ from collections.abc import Generator
 from pathlib import Path
 
 import pytest
-from playwright.sync_api import BrowserContext, Page, sync_playwright
+from playwright.sync_api import BrowserContext, Page
 
 from framework.auth import AuthStateManager
 from framework.config import EnvironmentSettings
-from framework.drivers.browser_factory import BrowserFactory
 from framework.drivers.driver_manager import DriverManager
 from framework.exceptions import ConfigurationError
-from framework.fixtures.driver_fixtures import test_failed
+from framework.fixtures.driver_fixtures import _BrowserSession, test_failed
 from framework.pages.login_page import LoginPage
 
 
@@ -24,7 +23,11 @@ def auth_state_manager(settings: EnvironmentSettings) -> AuthStateManager:
 
 
 @pytest.fixture(scope="session")
-def auth_state_path(settings: EnvironmentSettings, auth_state_manager: AuthStateManager) -> Path:
+def auth_state_path(
+    settings: EnvironmentSettings,
+    auth_state_manager: AuthStateManager,
+    _browser_session: _BrowserSession,
+) -> Path:
     """Session-scoped: ensure `.auth/{profile}.json` exists and is fresh,
     regenerating it via one throwaway login when missing or expired
     (`AuthStateManager.load_or_create`). Reused by every test in the run
@@ -35,6 +38,13 @@ def auth_state_path(settings: EnvironmentSettings, auth_state_manager: AuthState
     `config/environments/*.yaml`) — an explicit per-environment opt-in,
     matching the existing `feature_flags` pattern, since not every target
     application supports/permits storage-state reuse.
+
+    Uses the same shared `_browser_session` as `page`/`authenticated_page`
+    rather than starting its own `sync_playwright()` instance — Playwright's
+    sync API only supports one active driver connection per thread, so a
+    second, independent `sync_playwright()` call started while this worker's
+    session-scoped one is still running raises "Sync API inside the asyncio
+    loop" — this isn't a style preference, it's a correctness requirement.
     """
     if not settings.auth.enabled:
         raise ConfigurationError(
@@ -48,14 +58,9 @@ def auth_state_path(settings: EnvironmentSettings, auth_state_manager: AuthState
         login_page.open()
         login_page.login(settings.ui.login_username, settings.ui.login_password)
 
-    with sync_playwright() as playwright:
-        browser = BrowserFactory.launch(playwright, settings.browser)
-        try:
-            return auth_state_manager.load_or_create(
-                profile=settings.auth.profile, browser=browser, login=_login
-            )
-        finally:
-            browser.close()
+    return auth_state_manager.load_or_create(
+        profile=settings.auth.profile, browser=_browser_session.get(), login=_login
+    )
 
 
 @pytest.fixture
@@ -63,10 +68,12 @@ def authenticated_page(
     request: pytest.FixtureRequest,
     settings: EnvironmentSettings,
     auth_state_path: Path,
+    _browser_session: _BrowserSession,
 ) -> Generator[Page, None, None]:
     """Function-scoped Playwright Page, pre-authenticated via the shared
     `.auth/{profile}.json` session state — skips the login form entirely.
-    Same per-test isolation and failure-only artifact capture as `page`;
+    Same per-test isolation and failure-only artifact capture as `page`
+    (and the same worker-shared browser process — see `_browser_session`);
     use this instead of `page` for tests that only need to exercise
     already-logged-in behavior.
     """
@@ -74,6 +81,7 @@ def authenticated_page(
         config=settings.browser,
         test_name=request.node.nodeid,
         storage_state=auth_state_path,
+        browser=_browser_session.get(),
     )
     driver_page = manager.start()
 

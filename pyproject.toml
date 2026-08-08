@@ -7,6 +7,25 @@ license = "Apache-2.0"
 readme = "README.md"
 packages = [{ include = "framework" }]
 
+# Makes every fixture module this framework ships available to ANY pytest
+# session in a project that has this package installed (not just this
+# repo's own tests/) — no customer-side `conftest.py`/`pytest_plugins`
+# needed. This mirrors tests/conftest.py's own plugin list exactly; both
+# lists must be kept in sync if a new fixture module is added. Each entry
+# is just a fixture module (functions decorated with `@pytest.fixture`,
+# no module-level side effects), so registering all of them costs nothing
+# for a customer who only uses a subset — pytest fixtures are lazy, an
+# unused one is never instantiated. See docs/GettingStarted.md
+# ("Using this framework from your own project") for the customer-facing
+# explanation.
+[tool.poetry.plugins."pytest11"]
+framework-driver-fixtures = "framework.fixtures.driver_fixtures"
+framework-auth-fixtures = "framework.fixtures.auth_fixtures"
+framework-api-fixtures = "framework.api.fixtures.api_fixtures"
+framework-database-fixtures = "framework.database.fixtures.database_fixtures"
+framework-hybrid-fixtures = "framework.hybrid.fixtures"
+framework-testdata-fixtures = "framework.testdata.fixtures.testdata_fixtures"
+
 [tool.poetry.dependencies]
 python = "^3.13"
 playwright = "^1.47.0"
@@ -63,6 +82,13 @@ build-backend = "poetry.core.masonry.api"
 minversion = "8.0"
 addopts = "-ra --strict-markers --strict-config"
 testpaths = ["tests"]
+# `examples/` has no `__init__.py` chain (unlike `tests/`), so pytest's
+# rootdir-walk never reaches the repo root when it's collected on its own —
+# `framework` (installed via `poetry install --no-root`, not a real site-packages
+# install) becomes unimportable and `poetry run pytest examples/ -v`, exactly as
+# documented in README.md/examples/README.md, fails with "No module named
+# 'framework'". `pythonpath` puts the repo root on sys.path unconditionally.
+pythonpath = ["."]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
@@ -89,6 +115,7 @@ markers = [
   "discovery: application discovery engine (UI/API/DB introspection + code generation) tests",
   "ai: optional AI provider abstraction tests (framework.ai)",
   "sync: existing-framework analysis/sync engine tests (framework.sync)",
+  "extension: new-UI-on-existing-framework extension/reuse analysis tests (framework.extension)",
   "cli: unified CLI dispatcher tests (framework.cli)",
   "subscriber_management: Subscriber Management module",
   "provisioning: Provisioning module",

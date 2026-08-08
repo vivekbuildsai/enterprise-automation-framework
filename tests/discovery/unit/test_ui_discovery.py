@@ -4,6 +4,7 @@ import pytest
 from playwright.sync_api import Page
 
 from framework.discovery import UIDiscoveryEngine
+from framework.discovery.ui_discovery import _INTERACTIVE_SELECTOR
 
 pytestmark = pytest.mark.discovery
 
@@ -89,6 +90,30 @@ def test_discover_page_captures_role_and_accessible_name(page: Page) -> None:
 
     reports_link = next(el for el in result.elements if el.locator.value == "link")
     assert reports_link.locator.accessible_name == "Open reports"
+
+
+def test_discover_page_reads_every_element_in_one_browser_round_trip(
+    page: Page, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression guard for the batched-extraction optimization: element
+    attributes must be read via exactly one `eval_on_selector_all` call for
+    the whole page, not one Playwright round trip per element — otherwise
+    the N-IPC-calls-per-element cost this replaced would silently creep
+    back in.
+    """
+    page.set_content(_HTML)
+    calls = []
+    original = page.eval_on_selector_all
+
+    def _counting_eval_on_selector_all(selector: str, expression: str, *args: object) -> object:
+        calls.append(selector)
+        return original(selector, expression, *args)
+
+    monkeypatch.setattr(page, "eval_on_selector_all", _counting_eval_on_selector_all)
+
+    UIDiscoveryEngine(page).discover_page()
+
+    assert calls == [_INTERACTIVE_SELECTOR]
 
 
 def test_crawl_respects_max_pages_and_same_origin(page: Page) -> None:

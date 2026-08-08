@@ -13,8 +13,20 @@ a migration worksheet, never source code) are implemented; Mode 3
 (migrate) and Mode 4 (sync) are intentionally not — see
 docs/FrameworkSync.md.
 
-`analyze` never modifies the source repository. `scaffold` only ever
-writes into `--output-dir` (default `generated/`, gitignored).
+`analyze` never modifies the source repository. It also never assumes an
+existing test suite should be migrated: it produces an "EXISTING
+AUTOMATION INVENTORY" (tests/classes/suites/tags/Page Objects/API
+clients/execution model, ...) as a read-only understanding of what
+already exists — see docs/FrameworkSync.md, "Existing customer test
+inventory."
+
+`scaffold` only ever writes into `--output-dir` (default `generated/`,
+gitignored). By default it covers every detected test (Mode C, "Full
+Modernization Analysis") without migrating anything; pass `--scope`
+(`directory`/`suite`/`tag`/`class`/`test`) with `--selector` to restrict
+its "Migration candidates" section to exactly one subset (Mode B,
+"Selective Migration") — every other test is left unmentioned and
+untouched.
 
 `recommend` is entirely optional (gated by `ai.enabled` — see
 `framework.ai`): asks the configured `AIProvider` for a migration
@@ -37,7 +49,7 @@ from framework.sync.ai_recommendations import MappingRecommendation, recommend_m
 from framework.sync.analyzer import RepositoryAnalyzer
 from framework.sync.compatibility import compute_compatibility_report
 from framework.sync.diff import diff_analyses
-from framework.sync.models import RepositoryAnalysis
+from framework.sync.models import MigrationScope, RepositoryAnalysis
 from framework.sync.scaffold import generate_migration_worksheet
 from framework.sync.sources import (
     GitRepositorySource,
@@ -45,12 +57,19 @@ from framework.sync.sources import (
     RepositorySource,
     ZipArchiveSource,
 )
+from framework.sync.test_inventory import format_inventory
 
 
 def _resolve_source(raw: str) -> RepositorySource:
     if raw.endswith(".zip"):
         return ZipArchiveSource(raw)
-    if raw.startswith(("http://", "https://", "git@", "ssh://")):
+    if raw.startswith(("http://", "https://", "git@", "ssh://", "file://")):
+        # `GitRepositorySource` already documents `file://` as a supported
+        # git remote (`git clone` accepts it natively) — this was simply
+        # never wired to that prefix here, so a `file://` source fell
+        # through to `LocalDirectorySource`, which rejects it outright
+        # (`Path("file:///...").is_dir()` is never true) with a
+        # technically-correct but confusing "Not a directory" error.
         return GitRepositorySource(raw)
     return LocalDirectorySource(raw)
 
@@ -67,6 +86,24 @@ def _cmd_analyze(args: argparse.Namespace) -> None:
     report = compute_compatibility_report(analysis)
     print(f"Analyzed {analysis.structure.total_files} files ({analysis.primary_language}).")
     print(report.summary)
+    print()
+
+    ui_framework = next(
+        (f.name for f in analysis.detected_frameworks if f.category == "ui_automation"), None
+    )
+    execution_model = analysis.execution_model
+    print(
+        format_inventory(
+            analysis.inventory,
+            language=analysis.primary_language,
+            ui_framework=ui_framework,
+            runner=execution_model.runner if execution_model else None,
+            primary_execution=execution_model.command if execution_model else None,
+            parallelism=execution_model.parallelism if execution_model else None,
+        )
+    )
+    print()
+
     if analysis.findings:
         print(f"{len(analysis.findings)} finding(s) — see {args.report} for details.")
     print(f"Full analysis saved to {args.report}")
@@ -80,7 +117,13 @@ def _cmd_scaffold(args: argparse.Namespace) -> None:
         raw = json.loads(Path(args.recommendations).read_text(encoding="utf-8"))
         ai_recommendations = [MappingRecommendation.model_validate(item) for item in raw]
 
-    worksheet = generate_migration_worksheet(analysis, ai_recommendations=ai_recommendations)
+    scope = MigrationScope(args.scope)
+    worksheet = generate_migration_worksheet(
+        analysis,
+        ai_recommendations=ai_recommendations,
+        migration_scope=scope,
+        migration_selector=args.selector,
+    )
 
     output_path = Path(args.output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -139,6 +182,26 @@ def main(argv: list[str] | None = None) -> int:
         "--recommendations",
         default=None,
         help="Optional output of `recommend` to fold into the worksheet",
+    )
+    scaffold_parser.add_argument(
+        "--scope",
+        choices=[s.value for s in MigrationScope],
+        default=MigrationScope.REPOSITORY.value,
+        help=(
+            "Migration-candidate selection granularity (Mode B, 'Selective Migration'). "
+            "'repository' (default) analyzes every detected test; any other scope "
+            "requires --selector and restricts the worksheet's 'Migration candidates' "
+            "section to exactly that subset — every other test is left untouched."
+        ),
+    )
+    scaffold_parser.add_argument(
+        "--selector",
+        default=None,
+        help=(
+            "Required unless --scope=repository. A directory path prefix (scope=directory), "
+            "a source file path (scope=suite), a tag/group name (scope=tag), a class/"
+            "describe-block name (scope=class), or a test identifier/name (scope=test)."
+        ),
     )
     scaffold_parser.set_defaults(func=_cmd_scaffold)
 

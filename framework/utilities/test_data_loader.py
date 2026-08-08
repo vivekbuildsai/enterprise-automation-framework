@@ -9,9 +9,9 @@ from openpyxl import load_workbook
 
 from framework.enums import Environment
 from framework.exceptions import TestDataError
+from framework.project_root import PROJECT_ROOT
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
-_TESTDATA_DIR = _PROJECT_ROOT / "data" / "testdata"
+_TESTDATA_DIR = PROJECT_ROOT / "data" / "testdata"
 
 
 class TestDataLoader:

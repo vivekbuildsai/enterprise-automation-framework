@@ -10,9 +10,9 @@ from playwright.sync_api import Browser, BrowserContext
 
 from framework.exceptions import AuthenticationError
 from framework.logger import get_logger
+from framework.project_root import PROJECT_ROOT
 
 _logger = get_logger("AuthStateManager")
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 class AuthStateManager:
@@ -30,7 +30,7 @@ class AuthStateManager:
     """
 
     def __init__(self, state_dir: str = ".auth", max_age_seconds: int = 28_800) -> None:
-        self._dir = _PROJECT_ROOT / state_dir
+        self._dir = PROJECT_ROOT / state_dir
         self._max_age_seconds = max_age_seconds
 
     def path_for(self, profile: str) -> Path:

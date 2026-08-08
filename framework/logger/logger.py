@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger as _loguru_logger
 
+from framework.project_root import PROJECT_ROOT
+
 if TYPE_CHECKING:
     from loguru import Logger
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
-_LOG_DIR = _PROJECT_ROOT / "logs"
+_LOG_DIR = PROJECT_ROOT / "logs"
 _state = {"configured": False}
 
 _CONSOLE_FORMAT = (

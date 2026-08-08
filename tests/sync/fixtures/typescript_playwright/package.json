@@ -1,0 +1,12 @@
+{
+  "name": "sample-playwright-repo",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.47.0",
+    "allure-playwright": "^2.15.0",
+    "typescript": "^5.5.0"
+  }
+}

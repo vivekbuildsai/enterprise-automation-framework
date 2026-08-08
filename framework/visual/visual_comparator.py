@@ -10,11 +10,11 @@ from playwright.sync_api import Locator, Page
 
 from framework.exceptions import ValidationError
 from framework.logger import get_logger
+from framework.project_root import PROJECT_ROOT
 
 _logger = get_logger("VisualComparator")
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
-_BASELINES_DIR = _PROJECT_ROOT / "artifacts" / "visual_baselines"
-_DIFFS_DIR = _PROJECT_ROOT / "artifacts" / "visual_diffs"
+_BASELINES_DIR = PROJECT_ROOT / "artifacts" / "visual_baselines"
+_DIFFS_DIR = PROJECT_ROOT / "artifacts" / "visual_diffs"
 
 # Per-channel difference below this is treated as anti-aliasing/rendering
 # noise, not a real visual change — otherwise nearly every screenshot would

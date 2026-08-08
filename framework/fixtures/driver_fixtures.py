@@ -3,14 +3,52 @@ from __future__ import annotations
 from collections.abc import Generator
 
 import pytest
-from playwright.sync_api import Page
+from playwright.sync_api import Browser, Page, Playwright, sync_playwright
 from pluggy import Result
 
 from framework.config import EnvironmentSettings, get_settings
+from framework.drivers.browser_factory import BrowserFactory
 from framework.drivers.driver_manager import DriverManager
 from framework.logger import get_logger
 
 _logger = get_logger("fixtures")
+
+
+class _BrowserSession:
+    """Lazily launches, and self-heals, one `Browser` process shared by
+    every test in this pytest-xdist *worker's* session (a `session`-scoped
+    fixture is per-worker, not global — each worker still gets its own
+    browser, exactly as before; only the per-test relaunch is removed).
+    Playwright's `BrowserContext` already gives every test a fully isolated
+    cookie jar/storage/cache regardless of whether the underlying browser
+    process is shared, so reusing the process only trades away launch time
+    (~500ms measured), never test isolation.
+    """
+
+    def __init__(self, playwright: Playwright, config: EnvironmentSettings) -> None:
+        self._playwright = playwright
+        self._config = config
+        self._browser: Browser | None = None
+
+    def get(self) -> Browser:
+        if self._browser is None or not self._browser.is_connected():
+            if self._browser is not None:
+                _logger.warning("Shared browser was disconnected; relaunching for this test.")
+            self._browser = BrowserFactory.launch(self._playwright, self._config.browser)
+        return self._browser
+
+    def close(self) -> None:
+        if self._browser is not None and self._browser.is_connected():
+            self._browser.close()
+
+
+@pytest.fixture(scope="session")
+def _browser_session(settings: EnvironmentSettings) -> Generator[_BrowserSession, None, None]:
+    playwright = sync_playwright().start()
+    session = _BrowserSession(playwright, settings)
+    yield session
+    session.close()
+    playwright.stop()
 
 
 @pytest.hookimpl(tryfirst=True, hookwrapper=True)
@@ -43,13 +81,19 @@ def settings() -> EnvironmentSettings:
 
 @pytest.fixture
 def page(
-    request: pytest.FixtureRequest, settings: EnvironmentSettings
+    request: pytest.FixtureRequest,
+    settings: EnvironmentSettings,
+    _browser_session: _BrowserSession,
 ) -> Generator[Page, None, None]:
-    """Function-scoped Playwright Page. Each test gets its own browser +
-    context (parallel-safe under `pytest-xdist -n auto`), and artifacts
-    (screenshot/trace/video) are only persisted when the test fails.
+    """Function-scoped Playwright Page on a worker-shared `Browser` process
+    (see `_browser_session`) — each test still gets its own isolated
+    `BrowserContext`/`Page` (parallel-safe under `pytest-xdist -n auto`,
+    zero state leaks between tests), and artifacts (screenshot/trace/video)
+    are only persisted when the test fails.
     """
-    manager = DriverManager(config=settings.browser, test_name=request.node.nodeid)
+    manager = DriverManager(
+        config=settings.browser, test_name=request.node.nodeid, browser=_browser_session.get()
+    )
     driver_page = manager.start()
 
     yield driver_page

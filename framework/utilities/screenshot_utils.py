@@ -6,8 +6,9 @@ from pathlib import Path
 
 from playwright.sync_api import Locator, Page
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
-_SCREENSHOTS_DIR = _PROJECT_ROOT / "artifacts" / "screenshots"
+from framework.project_root import PROJECT_ROOT
+
+_SCREENSHOTS_DIR = PROJECT_ROOT / "artifacts" / "screenshots"
 
 
 def _safe_name(name: str) -> str:
