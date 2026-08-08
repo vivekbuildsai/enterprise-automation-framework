@@ -1,0 +1,7 @@
+{
+  "search_terms": {
+    "existing_subscriber_last_name": "Bach",
+    "nonexistent_subscriber_last_name": "Nonexistentxyz"
+  },
+  "expected_columns": ["Last Name", "First Name", "Email", "Due", "Web Site", "Action"]
+}

@@ -1,0 +1,51 @@
+# PRODUCTION: read-only smoke/sanity checks only. No destructive test data
+# generation should ever target this environment — enforce that at the test
+# tagging level (only `smoke`/`sanity` markers permitted in CI for this env).
+
+validation_mode: ui_api
+
+ui:
+  base_url: "${AUTOMATION_UI_BASE_URL:-https://www.example.com}"
+  login_username: "${AUTOMATION_UI_USERNAME:-}"
+  login_password: "${AUTOMATION_UI_PASSWORD:-}"
+
+api:
+  subscriber_management:
+    base_url: "${AUTOMATION_API_SUBSCRIBER_URL:-https://api.example.com/subscriber}"
+    timeout_seconds: 45
+    auth_type: mtls
+    client_id: "${AUTOMATION_API_CLIENT_ID:-}"
+    client_secret: "${AUTOMATION_API_CLIENT_SECRET:-}"
+
+database:
+  subscriber_db:
+    enabled: false
+    dialect: oracle
+    host: "${AUTOMATION_DB_HOST:-}"
+    port: 1521
+    database: "${AUTOMATION_DB_NAME:-}"
+    username: "${AUTOMATION_DB_USER:-}"
+    password: "${AUTOMATION_DB_PASSWORD:-}"
+    pool_size: 5
+
+browser:
+  browser: "${AUTOMATION_BROWSER:-chromium}"
+  headless: "${AUTOMATION_HEADLESS:-true}"
+  slow_mo_ms: 0
+  viewport_width: 1920
+  viewport_height: 1080
+  action_timeout_ms: "${AUTOMATION_ACTION_TIMEOUT_MS:-20000}"
+  navigation_timeout_ms: "${AUTOMATION_NAVIGATION_TIMEOUT_MS:-45000}"
+  trace_on_failure: true
+  video_on_failure: false
+  screenshot_on_failure: true
+  har_recording: false
+
+feature_flags:
+  self_healing_locators: true
+  ai_root_cause_analysis: false
+  visual_validation: false
+  api_validation: true
+  database_validation: false
+
+parallel_workers: 4

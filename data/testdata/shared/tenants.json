@@ -1,0 +1,6 @@
+{
+  "tenants": [
+    { "tenant_code": "A01", "tenant_name": "Shared Test Tenant A01", "status": "ACTIVE" },
+    { "tenant_code": "A02", "tenant_name": "Shared Test Tenant A02", "status": "ACTIVE" }
+  ]
+}

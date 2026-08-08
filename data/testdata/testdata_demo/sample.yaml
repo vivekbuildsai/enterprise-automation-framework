@@ -1,0 +1,6 @@
+note: Demonstrates DatasetLoader.load_yaml()
+tenants:
+  - tenant_code: A01
+    status: ACTIVE
+  - tenant_code: A02
+    status: SUSPENDED

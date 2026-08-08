@@ -1,0 +1,501 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+env:
+  AUTOMATION_ENV: dev
+  PYTHON_VERSION: "3.13"
+
+jobs:
+  lint:
+    name: Lint & Static Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Poetry
+        run: pipx install poetry==1.8.5
+
+      - name: Cache Poetry dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pypoetry
+          key: poetry-${{ runner.os }}-${{ hashFiles('poetry.lock') }}
+
+      - name: Install dependencies
+        run: poetry install --no-root
+
+      - name: Black (format check)
+        run: poetry run black --check framework tests
+
+      - name: Ruff (lint)
+        run: poetry run ruff check framework tests
+
+      - name: MyPy (type check)
+        run: poetry run mypy framework
+
+      - name: Bandit (security scan)
+        run: poetry run bandit -q -r framework -c pyproject.toml
+
+  test:
+    name: Test Suite
+    needs: lint
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Add suites here as they're built out (sanity, regression, ...).
+        # An empty suite makes pytest exit 5 ("no tests collected") and fail
+        # the job, so only list suites that actually have tests today.
+        # e2e includes 6 pytest.mark.skip'd modules (no real target app to run
+        # them against) alongside the real subscriber_management suite.
+        suite: [smoke, negative, accessibility, visual, e2e]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Poetry
+        run: pipx install poetry==1.8.5
+
+      - name: Install dependencies
+        run: poetry install --no-root
+
+      - name: Install Playwright browsers
+        run: poetry run python -m playwright install --with-deps chromium firefox webkit
+
+      - name: Run ${{ matrix.suite }} tests
+        env:
+          AUTOMATION_UI_BASE_URL: https://the-internet.herokuapp.com
+          AUTOMATION_UI_USERNAME: tomsmith
+          AUTOMATION_UI_PASSWORD: SuperSecretPassword!
+        run: |
+          poetry run python -m pytest tests/${{ matrix.suite }} \
+            -n auto \
+            -m ${{ matrix.suite }} \
+            --alluredir=reports/allure-results \
+            --continue-on-collection-errors
+
+      - name: Upload Allure results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-results-${{ matrix.suite }}
+          path: reports/allure-results
+          retention-days: 14
+
+      - name: Upload failure artifacts (screenshots/traces/videos)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failure-artifacts-${{ matrix.suite }}
+          path: artifacts
+          retention-days: 14
+
+  test-api:
+    name: API Test Suite (with coverage)
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Poetry
+        run: pipx install poetry==1.8.5
+
+      - name: Install dependencies
+        run: poetry install --no-root
+
+      - name: Run API tests with coverage
+        run: |
+          poetry run coverage run --source=framework/api -m pytest tests/api \
+            -n auto \
+            -m api \
+            --alluredir=reports/allure-results
+
+      - name: Coverage report (fail under 90%)
+        run: |
+          poetry run coverage report -m --fail-under=90
+          poetry run coverage xml -o reports/coverage-api.xml
+
+      - name: Upload Allure results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-results-api
+          path: reports/allure-results
+          retention-days: 14
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-api
+          path: reports/coverage-api.xml
+          retention-days: 14
+
+  test-database:
+    name: Database Test Suite (${{ matrix.dialect }})
+    needs: lint
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Same tests/database suite, only AUTOMATION_DB_* env vars differ per
+        # dialect — this matrix *is* the proof that switching databases is
+        # a configuration change, not a code change. Postgres/MySQL service
+        # containers are job-level (GitHub Actions has no per-matrix-leg
+        # services), so they start even for the sqlite leg — harmless, just
+        # unused for that leg.
+        include:
+          - dialect: sqlite
+            db_host: ""
+            db_port: "0"
+            db_name: ":memory:"
+            db_user: ""
+            db_password: ""
+          - dialect: postgresql
+            db_host: localhost
+            db_port: "5432"
+            db_name: sample_app
+            db_user: automation_qa
+            db_password: automation_qa_password
+          - dialect: mysql
+            db_host: localhost
+            db_port: "3306"
+            db_name: sample_app
+            db_user: automation_qa
+            db_password: automation_qa_password
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: sample_app
+          POSTGRES_USER: automation_qa
+          POSTGRES_PASSWORD: automation_qa_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U automation_qa"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_DATABASE: sample_app
+          MYSQL_USER: automation_qa
+          MYSQL_PASSWORD: automation_qa_password
+          MYSQL_ROOT_PASSWORD: automation_root_password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Poetry
+        run: pipx install poetry==1.8.5
+
+      - name: Install dependencies
+        run: poetry install --no-root
+
+      - name: Run database tests (${{ matrix.dialect }})
+        env:
+          AUTOMATION_DB_DIALECT: ${{ matrix.dialect }}
+          AUTOMATION_DB_HOST: ${{ matrix.db_host }}
+          AUTOMATION_DB_PORT: ${{ matrix.db_port }}
+          AUTOMATION_DB_NAME: ${{ matrix.db_name }}
+          AUTOMATION_DB_USER: ${{ matrix.db_user }}
+          AUTOMATION_DB_PASSWORD: ${{ matrix.db_password }}
+        run: |
+          poetry run python -m pytest tests/database \
+            -m "database and not integration" \
+            --alluredir=reports/allure-results \
+            --continue-on-collection-errors
+
+      - name: Upload Allure results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-results-database-${{ matrix.dialect }}
+          path: reports/allure-results
+          retention-days: 14
+
+  test-hybrid:
+    name: Hybrid Validation Test Suite (UI + API + Database)
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Poetry
+        run: pipx install poetry==1.8.5
+
+      - name: Install dependencies
+        run: poetry install --no-root
+
+      - name: Install Playwright browsers
+        run: poetry run python -m playwright install --with-deps chromium
+
+      - name: Run hybrid (UI+API+DB) tests
+        env:
+          AUTOMATION_UI_BASE_URL: https://the-internet.herokuapp.com
+          AUTOMATION_UI_USERNAME: tomsmith
+          AUTOMATION_UI_PASSWORD: SuperSecretPassword!
+          AUTOMATION_API_DUMMYJSON_URL: https://dummyjson.com
+          AUTOMATION_DB_DIALECT: sqlite
+          AUTOMATION_DB_NAME: ":memory:"
+        run: |
+          poetry run python -m pytest tests/database/integration \
+            -m hybrid \
+            --alluredir=reports/allure-results
+
+      - name: Upload Allure results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-results-hybrid
+          path: reports/allure-results
+          retention-days: 14
+
+      - name: Upload failure artifacts (screenshots/traces/videos)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failure-artifacts-hybrid
+          path: artifacts
+          retention-days: 14
+
+  test-testdata:
+    name: Test Data Management Suite
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Poetry
+        run: pipx install poetry==1.8.5
+
+      - name: Install dependencies
+        run: poetry install --no-root
+
+      - name: Install Playwright browsers
+        run: poetry run python -m playwright install --with-deps chromium
+
+      - name: Validate data/testdata/ JSON and YAML files are well-formed
+        run: |
+          poetry run python -c "
+          import json, sys
+          from pathlib import Path
+          import yaml
+          errors = []
+          for path in Path('data/testdata').rglob('*.json'):
+              try:
+                  json.loads(path.read_text())
+              except Exception as exc:
+                  errors.append(f'{path}: {exc}')
+          for path in Path('data/testdata').rglob('*.yaml'):
+              try:
+                  yaml.safe_load(path.read_text())
+              except Exception as exc:
+                  errors.append(f'{path}: {exc}')
+          if errors:
+              print('\n'.join(errors))
+              sys.exit(1)
+          print('All data/testdata/ JSON/YAML files are well-formed.')
+          "
+
+      - name: Run Test Data Management suite (unit + integration)
+        env:
+          AUTOMATION_UI_BASE_URL: https://the-internet.herokuapp.com
+          AUTOMATION_UI_USERNAME: tomsmith
+          AUTOMATION_UI_PASSWORD: SuperSecretPassword!
+          AUTOMATION_API_DUMMYJSON_URL: https://dummyjson.com
+          AUTOMATION_DB_DIALECT: sqlite
+          AUTOMATION_DB_NAME: ":memory:"
+        run: |
+          poetry run python -m pytest tests/testdata \
+            -m testdata \
+            --alluredir=reports/allure-results
+
+      - name: Verify seed + cleanup leaves zero rows behind (cleanup verification)
+        run: |
+          poetry run python -c "
+          from framework.config.models import DatabaseConfig, EnvironmentSettings, UiConfig
+          from framework.database.connection import DatabaseManager
+          from framework.database.utilities import QueryExecutor, SchemaManager
+          from framework.testdata.builders import TenantBuilder
+          from framework.testdata.cleanup import DatabaseCleanupService
+          from framework.testdata.seed import DatabaseSeeder
+
+          settings = EnvironmentSettings(
+              environment='dev', ui=UiConfig(base_url='https://example.com'),
+              database={'subscriber_db': DatabaseConfig(enabled=True, dialect='sqlite', database=':memory:')},
+          )
+          manager = DatabaseManager(settings)
+          with manager.connection('subscriber_db') as conn:
+              executor = QueryExecutor(conn, db_key='subscriber_db', dialect='sqlite')
+              SchemaManager.create_all(executor)
+              conn.commit()
+
+          seeder = DatabaseSeeder(manager, 'subscriber_db')
+          cleanup = DatabaseCleanupService(manager, 'subscriber_db')
+          tenant = TenantBuilder().build()
+          seeder.seed([tenant])
+          cleanup.delete([tenant])
+
+          with manager.connection('subscriber_db') as conn:
+              executor = QueryExecutor(conn, db_key='subscriber_db', dialect='sqlite')
+              remaining = executor.fetch_one('SELECT COUNT(*) AS c FROM tenants')['c']
+              assert remaining == 0, f'Expected 0 rows after cleanup, found {remaining}'
+          print('Cleanup verification passed: 0 rows remain after seed + cleanup.')
+          manager.dispose_all()
+          "
+
+      - name: Verify baseline database seeding still works (seed verification)
+        run: |
+          poetry run python -c "
+          from framework.config.models import DatabaseConfig, EnvironmentSettings, UiConfig
+          from framework.database.connection import DatabaseManager
+          from framework.database.services import SeedManager
+          from framework.database.utilities import QueryExecutor, SchemaManager
+
+          settings = EnvironmentSettings(
+              environment='dev', ui=UiConfig(base_url='https://example.com'),
+              database={'subscriber_db': DatabaseConfig(enabled=True, dialect='sqlite', database=':memory:')},
+          )
+          manager = DatabaseManager(settings)
+          with manager.connection('subscriber_db') as conn:
+              executor = QueryExecutor(conn, db_key='subscriber_db', dialect='sqlite')
+              SchemaManager.create_all(executor)
+              result = SeedManager(executor).seed_baseline()
+              conn.commit()
+              assert len(result.subscribers) == 3
+          print('Seed verification passed.')
+          manager.dispose_all()
+          "
+
+      - name: Generate sample synthetic dataset artifact
+        run: |
+          mkdir -p artifacts/testdata
+          poetry run python -c "
+          from dataclasses import asdict
+          from framework.testdata.builders import SubscriberBuilder
+          from framework.testdata.exporters import CsvExporter, JsonExporter
+
+          records = [asdict(s) for s in SubscriberBuilder().gold_tier().build_many(20)]
+          JsonExporter.export(records, 'artifacts/testdata/sample_subscribers.json')
+          CsvExporter.export(records, 'artifacts/testdata/sample_subscribers.csv')
+          "
+
+      - name: Upload Allure results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-results-testdata
+          path: reports/allure-results
+          retention-days: 14
+
+      - name: Upload generated test-data artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sample-testdata-artifacts
+          path: artifacts/testdata
+          retention-days: 14
+
+  report:
+    name: Generate Allure Report
+    needs: [test, test-api, test-database, test-hybrid, test-testdata]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all Allure results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: allure-results-*
+          path: reports/allure-results
+          merge-multiple: true
+
+      - name: Generate Allure report
+        uses: simple-elf/allure-report-action@v1.9
+        with:
+          allure_results: reports/allure-results
+          allure_report: reports/allure-report
+
+      - name: Archive Allure report
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-report
+          path: reports/allure-report
+          retention-days: 30
+
+  docker:
+    name: Build Docker Image
+    needs: [lint, test, test-api, test-database, test-hybrid, test-testdata]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -f docker/Dockerfile -t enterprise-automation-framework:${{ github.sha }} .
+
+      - name: Verify API tests run inside the image
+        run: |
+          docker run --rm \
+            -e AUTOMATION_API_DUMMYJSON_URL=https://dummyjson.com \
+            enterprise-automation-framework:${{ github.sha }} \
+            tests/api/smoke -v -m smoke
+
+      - name: Verify database tests run inside the image
+        run: |
+          docker run --rm \
+            -e AUTOMATION_DB_DIALECT=sqlite \
+            -e AUTOMATION_DB_NAME=:memory: \
+            enterprise-automation-framework:${{ github.sha }} \
+            tests/database/smoke -v -m smoke
+
+      - name: Verify test-data unit suite runs inside the image
+        run: |
+          docker run --rm \
+            enterprise-automation-framework:${{ github.sha }} \
+            tests/testdata/unit -v -m testdata

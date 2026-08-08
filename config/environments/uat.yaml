@@ -1,0 +1,47 @@
+validation_mode: ui_api_database
+
+ui:
+  base_url: "${AUTOMATION_UI_BASE_URL:-https://uat.example.com}"
+  login_username: "${AUTOMATION_UI_USERNAME:-}"
+  login_password: "${AUTOMATION_UI_PASSWORD:-}"
+
+api:
+  subscriber_management:
+    base_url: "${AUTOMATION_API_SUBSCRIBER_URL:-https://api.uat.example.com/subscriber}"
+    timeout_seconds: 30
+    auth_type: bearer
+    client_id: "${AUTOMATION_API_CLIENT_ID:-}"
+    client_secret: "${AUTOMATION_API_CLIENT_SECRET:-}"
+
+database:
+  subscriber_db:
+    enabled: true
+    dialect: postgresql
+    host: "${AUTOMATION_DB_HOST:-uat-db.example.com}"
+    port: 5432
+    database: "${AUTOMATION_DB_NAME:-sample_app}"
+    username: "${AUTOMATION_DB_USER:-automation_uat}"
+    password: "${AUTOMATION_DB_PASSWORD:-}"
+    pool_size: 10
+
+browser:
+  browser: "${AUTOMATION_BROWSER:-chromium}"
+  headless: "${AUTOMATION_HEADLESS:-true}"
+  slow_mo_ms: 0
+  viewport_width: 1920
+  viewport_height: 1080
+  action_timeout_ms: "${AUTOMATION_ACTION_TIMEOUT_MS:-20000}"
+  navigation_timeout_ms: "${AUTOMATION_NAVIGATION_TIMEOUT_MS:-45000}"
+  trace_on_failure: true
+  video_on_failure: true
+  screenshot_on_failure: true
+  har_recording: true
+
+feature_flags:
+  self_healing_locators: false
+  ai_root_cause_analysis: false
+  visual_validation: true
+  api_validation: true
+  database_validation: true
+
+parallel_workers: 8

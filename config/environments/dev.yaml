@@ -1,0 +1,116 @@
+# DEV environment configuration.
+# Secrets are NEVER hardcoded here — ${VAR:-default} pulls from the process
+# environment / .env file at load time. See .env.example.
+
+validation_mode: "${AUTOMATION_VALIDATION_MODE:-ui_api_database}"
+
+ui:
+  base_url: "${AUTOMATION_UI_BASE_URL:-https://the-internet.herokuapp.com}"
+  login_username: "${AUTOMATION_UI_USERNAME:-tomsmith}"
+  login_password: "${AUTOMATION_UI_PASSWORD:-SuperSecretPassword!}"
+
+# Additional named UI targets beyond the sample `ui` target above — e.g. a
+# real customer application, only reachable from certain networks.
+# `base_url` is optional per-target (see `OptionalUiConfig`): an
+# empty/unset value means "not configured here", not a load failure. Real
+# values belong only in a gitignored `.env.dev` — never commit them (see
+# .env.dev.example).
+ui_targets:
+  target_app:
+    base_url: "${AUTOMATION_APP_BASE_URL:-}"
+    login_username: "${AUTOMATION_APP_USERNAME:-}"
+    login_password: "${AUTOMATION_APP_PASSWORD:-}"
+
+api:
+  subscriber_management:
+    base_url: "${AUTOMATION_API_SUBSCRIBER_URL:-https://api.dev.example.com/subscriber}"
+    timeout_seconds: 30
+    auth_type: bearer
+    client_id: "${AUTOMATION_API_CLIENT_ID:-}"
+    client_secret: "${AUTOMATION_API_CLIENT_SECRET:-}"
+  # Public, no-signup sample target for the API framework's smoke/regression
+  # suite — same role dev.yaml's `ui.base_url` plays for UI tests. No auth
+  # required for login/users; /auth/me demonstrates the pluggable Bearer/JWT
+  # auth strategy against a real token issued by the login call.
+  dummyjson:
+    base_url: "${AUTOMATION_API_DUMMYJSON_URL:-https://dummyjson.com}"
+    timeout_seconds: 30
+    auth_type: none
+
+# `dialect`/`host`/`port`/`database` are all env-var driven so the exact
+# same test suite runs against SQLite (zero setup — the default below),
+# PostgreSQL, MySQL, Oracle, or SQL Server purely by changing environment
+# variables — see docs/DatabaseConfiguration.md. `port: 0` (unset) falls
+# back to the dialect's conventional default port (ConnectionFactory).
+database:
+  subscriber_db:
+    enabled: true
+    dialect: "${AUTOMATION_DB_DIALECT:-sqlite}"
+    host: "${AUTOMATION_DB_HOST:-}"
+    port: "${AUTOMATION_DB_PORT:-0}"
+    database: "${AUTOMATION_DB_NAME:-:memory:}"
+    username: "${AUTOMATION_DB_USER:-}"
+    password: "${AUTOMATION_DB_PASSWORD:-}"
+    pool_size: 5
+
+# ClickHouse (framework.database.clickhouse) — a dedicated layer, separate
+# from the SQLAlchemy-based `database` section above. `enabled` stays false
+# until real connection details are supplied via .env.dev.
+clickhouse:
+  default:
+    enabled: "${AUTOMATION_CLICKHOUSE_ENABLED:-false}"
+    host: "${AUTOMATION_CLICKHOUSE_HOST:-}"
+    port: "${AUTOMATION_CLICKHOUSE_PORT:-8123}"
+    database: "${AUTOMATION_CLICKHOUSE_DATABASE:-default}"
+    username: "${AUTOMATION_CLICKHOUSE_USER:-}"
+    password: "${AUTOMATION_CLICKHOUSE_PASSWORD:-}"
+    protocol: "${AUTOMATION_CLICKHOUSE_PROTOCOL:-http}"
+
+# framework.ai — optional, disabled by default. `api_key` must only ever
+# come from the env var below, never a literal value here.
+ai:
+  enabled: "${AUTOMATION_AI_ENABLED:-false}"
+  provider: "${AUTOMATION_AI_PROVIDER:-none}"
+  endpoint: "${AUTOMATION_AI_ENDPOINT:-}"
+  model: "${AUTOMATION_AI_MODEL:-}"
+  api_key: "${AUTOMATION_AI_API_KEY:-}"
+  timeout_seconds: "${AUTOMATION_AI_TIMEOUT_SECONDS:-30}"
+  temperature: "${AUTOMATION_AI_TEMPERATURE:-0.2}"
+
+browser:
+  browser: "${AUTOMATION_BROWSER:-chromium}"
+  headless: "${AUTOMATION_HEADLESS:-true}"
+  slow_mo_ms: 0
+  viewport_width: 1920
+  viewport_height: 1080
+  action_timeout_ms: "${AUTOMATION_ACTION_TIMEOUT_MS:-15000}"
+  navigation_timeout_ms: "${AUTOMATION_NAVIGATION_TIMEOUT_MS:-30000}"
+  trace_on_failure: true
+  video_on_failure: true
+  screenshot_on_failure: true
+  har_recording: false
+
+auth:
+  enabled: true
+  state_dir: ".auth"
+  profile: "user"
+  max_age_seconds: 28800
+
+feature_flags:
+  # Core — enabled per environment as needed, never a hard dependency of
+  # the other core capabilities.
+  database_validation: true
+  api_validation: true
+  network_interception: true
+  visual_validation: false
+  # Optional — each is an independently importable package
+  # (framework.discovery / framework.sync / framework.ai); the core
+  # framework runs unchanged with every one of these left false.
+  discovery: false
+  framework_sync: false
+  ai_assistance: false
+  code_generation: false
+  self_healing_locators: false
+  ai_root_cause_analysis: false
+
+parallel_workers: 4

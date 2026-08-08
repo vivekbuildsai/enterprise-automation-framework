@@ -1,0 +1,57 @@
+{
+  "dashboardId": "sample-dashboard",
+  "name": "Sample Usage Dashboard",
+  "dateRange": {
+    "label": "Last 7 days",
+    "dateFromUi": "7d",
+    "dateToUi": "today",
+    "dateFromDb": "toStartOfDay(now() - INTERVAL 7 DAY)",
+    "dateToDb": "now()"
+  },
+  "granularity": {
+    "active": "daily",
+    "options": {
+      "daily": { "label": "Daily", "table": "daily_usage_summary" },
+      "hourly": { "label": "Hourly", "table": "hourly_usage_summary" }
+    }
+  },
+  "host": {
+    "defaultId": 1,
+    "defaultLabel": "sample-host"
+  },
+  "segmentType": "example",
+  "filterComparisonWidgetId": "top-countries-by-usage",
+  "mandatoryFilters": ["date_range", "host"],
+  "tolerancePct": 2.0,
+  "timeouts": {
+    "uiBeforeAllMs": 15000
+  },
+  "exportValidation": {
+    "totalUsage": {
+      "description": "Total usage volume for the selected date range/host — validates the dashboard's summary export against ClickHouse directly.",
+      "tolerancePct": 2.0,
+      "totalTemplate": "SELECT sum(usage_units) AS total FROM {{CH_DATABASE}}.daily_usage_summary WHERE host_id IN ({{HOST_ID}}) AND event_date BETWEEN {{DATE_FROM_UNIX}} AND {{DATE_TO_UNIX}}",
+      "perRowTemplate": "SELECT country, sum(usage_units) AS total FROM {{CH_DATABASE}}.daily_usage_summary WHERE host_id IN ({{HOST_ID}}) AND event_date BETWEEN {{DATE_FROM_UNIX}} AND {{DATE_TO_UNIX}} GROUP BY country ORDER BY total DESC"
+    }
+  },
+  "widgets": [
+    {
+      "id": "top-countries-by-usage",
+      "name": "Top Countries by Usage",
+      "tab": "overview",
+      "identify": {
+        "mustHave": ["widget", "top-countries"],
+        "mustNotHave": ["forecast"]
+      },
+      "extractors": {
+        "dimension": "country",
+        "metric": "usage_units"
+      },
+      "chQueryTemplate": "SELECT country AS dimension, sum(usage_units) AS total FROM {{CH_DATABASE}}.daily_usage_summary WHERE host_id IN ({{HOST_ID}}) AND event_date BETWEEN {{DATE_FROM_UNIX}} AND {{DATE_TO_UNIX}} GROUP BY country ORDER BY total DESC LIMIT 10",
+      "topN": 10,
+      "tolerancePct": 2.0,
+      "minVolumeForAssertion": 0,
+      "multiResponse": false
+    }
+  ]
+}

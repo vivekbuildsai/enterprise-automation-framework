@@ -1,0 +1,151 @@
+[tool.poetry]
+name = "enterprise-automation-framework"
+version = "0.1.0"
+description = "Generic, product-agnostic enterprise test automation framework (UI, API, Database, Performance, Security, AI-assisted testing) — configurable for any application or customer."
+authors = ["QA Automation Engineering <qa-automation@example.com>"]
+license = "Apache-2.0"
+readme = "README.md"
+packages = [{ include = "framework" }]
+
+[tool.poetry.dependencies]
+python = "^3.13"
+playwright = "^1.47.0"
+pytest = "^8.3.3"
+pytest-xdist = "^3.6.1"
+allure-pytest = "^2.13.5"
+loguru = "^0.7.2"
+pydantic = "^2.9.2"
+httpx = "^0.27.2"
+sqlalchemy = "^2.0.35"
+psycopg2-binary = "^2.9.9"
+pymysql = "^1.1.1"
+faker = "^30.1.0"
+tenacity = "^9.0.0"
+python-dotenv = "^1.0.1"
+pyyaml = "^6.0.2"
+jsonschema = "^4.23.0"
+openpyxl = "^3.1.5"
+cryptography = "^43.0.1"
+axe-playwright-python = "^0.1.8"
+pillow = "^10.4.0"
+clickhouse-connect = "^0.8.4"
+
+[tool.poetry.group.oracle]
+optional = true
+[tool.poetry.group.oracle.dependencies]
+# oracledb (not cx_Oracle): pure-Python, supports "thin mode" with no Oracle
+# Instant Client install required — the right default for CI/containers.
+oracledb = "^2.5.0"
+
+[tool.poetry.group.mssql]
+optional = true
+[tool.poetry.group.mssql.dependencies]
+pyodbc = "^5.1.0"
+
+[tool.poetry.group.dev.dependencies]
+black = "^24.10.0"
+ruff = "^0.6.9"
+mypy = "^1.11.2"
+bandit = "^1.7.10"
+coverage = "^7.6.1"
+pre-commit = "^3.8.0"
+types-PyYAML = "^6.0.12.20240917"
+types-requests = "^2.32.0.20240914"
+
+[build-system]
+requires = ["poetry-core>=1.9.0"]
+build-backend = "poetry.core.masonry.api"
+
+# ---------------------------------------------------------------------------
+# Pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-ra --strict-markers --strict-config"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+markers = [
+  "smoke: fast critical-path checks",
+  "sanity: post-deploy sanity checks",
+  "regression: full regression suite",
+  "e2e: end-to-end business flows",
+  "api: API-layer tests",
+  "backend: backend/service validation tests",
+  "database: database validation tests",
+  "testdata: test data management (builders/generators/datasets/seed/cleanup) tests",
+  "auth: authentication state management (.auth/*.json save/restore/reuse) tests",
+  "config: environment/settings configuration layer tests",
+  "models: business domain model tests (framework.models)",
+  "integration: multi-component integration tests (e.g. hybrid UI/API/DB)",
+  "hybrid: cross-layer UI+API+DB validation tests",
+  "performance: performance tests",
+  "security: security tests",
+  "ui: browser UI tests",
+  "negative: negative-path / invalid-input tests",
+  "accessibility: axe-core accessibility scans",
+  "visual: visual regression (screenshot comparison) tests",
+  "discovery: application discovery engine (UI/API/DB introspection + code generation) tests",
+  "ai: optional AI provider abstraction tests (framework.ai)",
+  "sync: existing-framework analysis/sync engine tests (framework.sync)",
+  "cli: unified CLI dispatcher tests (framework.cli)",
+  "subscriber_management: Subscriber Management module",
+  "provisioning: Provisioning module",
+  "billing: Billing module",
+]
+log_cli = false
+filterwarnings = ["ignore::DeprecationWarning"]
+
+# ---------------------------------------------------------------------------
+# Black
+# ---------------------------------------------------------------------------
+[tool.black]
+line-length = 100
+target-version = ["py313"]
+include = '\.pyi?$'
+
+# ---------------------------------------------------------------------------
+# Ruff
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+src = ["framework", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "C4", "UP", "SIM", "N", "A", "PL"]
+ignore = ["PLR0913", "PLR2004"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["framework"]
+
+# ---------------------------------------------------------------------------
+# MyPy
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.13"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+exclude = ["reports/", "artifacts/", "logs/"]
+
+# ---------------------------------------------------------------------------
+# Bandit
+# ---------------------------------------------------------------------------
+[tool.bandit]
+exclude_dirs = ["tests", "reports", "artifacts", ".venv"]
+
+# ---------------------------------------------------------------------------
+# Coverage
+# ---------------------------------------------------------------------------
+[tool.coverage.run]
+source = ["framework"]
+branch = true
+omit = ["*/__init__.py"]
+
+[tool.coverage.report]
+fail_under = 0
+show_missing = true
+exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:", "raise NotImplementedError"]

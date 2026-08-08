@@ -1,0 +1,138 @@
+services:
+  automation:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: enterprise-automation-framework:local
+    environment:
+      AUTOMATION_ENV: ${AUTOMATION_ENV:-dev}
+      AUTOMATION_UI_BASE_URL: ${AUTOMATION_UI_BASE_URL:-https://the-internet.herokuapp.com}
+      AUTOMATION_UI_USERNAME: ${AUTOMATION_UI_USERNAME:-tomsmith}
+      AUTOMATION_UI_PASSWORD: ${AUTOMATION_UI_PASSWORD:-SuperSecretPassword!}
+    volumes:
+      - ./artifacts:/opt/automation/artifacts
+      - ./reports:/opt/automation/reports
+      - ./logs:/opt/automation/logs
+    command: ["tests/smoke", "-v", "-n", "auto", "--alluredir=reports/allure-results"]
+
+  api-tests:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: enterprise-automation-framework:local
+    environment:
+      AUTOMATION_ENV: ${AUTOMATION_ENV:-dev}
+      AUTOMATION_API_DUMMYJSON_URL: ${AUTOMATION_API_DUMMYJSON_URL:-https://dummyjson.com}
+    volumes:
+      - ./artifacts:/opt/automation/artifacts
+      - ./reports:/opt/automation/reports
+      - ./logs:/opt/automation/logs
+    command: ["tests/api", "-v", "-n", "auto", "-m", "api", "--alluredir=reports/allure-results"]
+
+  # --- Local database containers -------------------------------------------
+  # Give the exact same tests/database suite a real server to run against
+  # (not just SQLite) — `AUTOMATION_DB_DIALECT=postgresql AUTOMATION_DB_HOST=localhost
+  # AUTOMATION_DB_PORT=5432 AUTOMATION_DB_NAME=sample_app AUTOMATION_DB_USER=automation_qa
+  # AUTOMATION_DB_PASSWORD=automation_qa_password poetry run pytest tests/database` after
+  # `docker compose up -d postgres` proves the "switch via configuration
+  # only" claim with zero test-code changes.
+  #
+  # Deliberately fixed (not `${AUTOMATION_DB_*:-...}`) credentials here: those
+  # variable names are also the *app's* SQLite-by-default config in `.env`
+  # (see docs/DatabaseConfiguration.md), so reusing them here would let a
+  # developer's local `.env` silently rename/misconfigure these throwaway
+  # containers.
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: sample_app
+      POSTGRES_USER: automation_qa
+      POSTGRES_PASSWORD: automation_qa_password
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U automation_qa"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: sample_app
+      MYSQL_USER: automation_qa
+      MYSQL_PASSWORD: automation_qa_password
+      MYSQL_ROOT_PASSWORD: automation_root_password
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Optional (large image, slow to start): `docker compose --profile oracle
+  # up -d oracle-xe`. Requires the `oracle` poetry group installed
+  # (`poetry install --with oracle`) to actually connect from outside Docker.
+  oracle-xe:
+    image: gvenzl/oracle-xe:21-slim
+    profiles: ["oracle"]
+    environment:
+      ORACLE_PASSWORD: automation_qa_password
+      APP_USER: automation_qa
+      APP_USER_PASSWORD: automation_qa_password
+    ports:
+      - "1521:1521"
+
+  database-tests:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: enterprise-automation-framework:local
+    environment:
+      AUTOMATION_ENV: ${AUTOMATION_ENV:-dev}
+      AUTOMATION_DB_DIALECT: postgresql
+      AUTOMATION_DB_HOST: postgres
+      AUTOMATION_DB_PORT: 5432
+      AUTOMATION_DB_NAME: sample_app
+      AUTOMATION_DB_USER: automation_qa
+      AUTOMATION_DB_PASSWORD: automation_qa_password
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./artifacts:/opt/automation/artifacts
+      - ./reports:/opt/automation/reports
+      - ./logs:/opt/automation/logs
+    command:
+      ["tests/database", "-v", "-m", "database and not integration", "--alluredir=reports/allure-results"]
+
+  hybrid-tests:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: enterprise-automation-framework:local
+    environment:
+      AUTOMATION_ENV: ${AUTOMATION_ENV:-dev}
+      AUTOMATION_UI_BASE_URL: ${AUTOMATION_UI_BASE_URL:-https://the-internet.herokuapp.com}
+      AUTOMATION_API_DUMMYJSON_URL: ${AUTOMATION_API_DUMMYJSON_URL:-https://dummyjson.com}
+      AUTOMATION_DB_DIALECT: sqlite
+      AUTOMATION_DB_NAME: ":memory:"
+    volumes:
+      - ./artifacts:/opt/automation/artifacts
+      - ./reports:/opt/automation/reports
+      - ./logs:/opt/automation/logs
+    command: ["tests/database/integration", "-v", "-m", "hybrid", "--alluredir=reports/allure-results"]
+
+  allure-report:
+    image: frankescobar/allure-docker-service:latest
+    ports:
+      - "5050:5050"
+    environment:
+      CHECK_RESULTS_EVERY_SECONDS: 5
+      KEEP_HISTORY: 1
+    volumes:
+      - ./reports/allure-results:/app/allure-results
+      - ./reports/allure-report:/app/default-reports
+    depends_on:
+      - automation

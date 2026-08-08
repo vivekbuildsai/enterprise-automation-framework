@@ -1,0 +1,6 @@
+{
+  "scenario": "roaming_subscriber",
+  "description": "File-authored variant of the roaming_subscriber scenario for teams who prefer editing a data file over builder chains.",
+  "subscriber": { "status": "ACTIVE", "cos": "Gold" },
+  "zone": { "tr_type": "LBTR", "ota_region": "EMEA" }
+}

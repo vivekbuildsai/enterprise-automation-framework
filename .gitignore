@@ -1,0 +1,69 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+poetry.toml
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.env.local
+
+# Saved Playwright login sessions (framework.auth) — real cookies/localStorage,
+# regenerated on demand, never committed.
+.auth/
+
+# Test artifacts & reports (kept locally, never committed)
+artifacts/screenshots/*
+!artifacts/screenshots/.gitkeep
+artifacts/videos/*
+!artifacts/videos/.gitkeep
+artifacts/traces/*
+!artifacts/traces/.gitkeep
+artifacts/har/*
+!artifacts/har/.gitkeep
+# Visual baselines are per-run/per-machine in this framework's own test suite
+# (see tests/visual/) to avoid cross-platform font-rendering false positives.
+# A team adopting real, committed baselines for their own modules should add
+# an explicit exception for those specific files.
+artifacts/visual_baselines/*
+!artifacts/visual_baselines/.gitkeep
+artifacts/visual_diffs/*
+!artifacts/visual_diffs/.gitkeep
+reports/allure-results/*
+!reports/allure-results/.gitkeep
+reports/allure-report/*
+!reports/allure-report/.gitkeep
+logs/*
+!logs/.gitkeep
+
+# Application Discovery Engine output (framework.discovery) — draft code
+# and discovery reports for a specific target application, always meant
+# for human review before anything in here is hand-copied into framework/.
+generated/
+discovery_report.json
+discovery_report.*.json
+
+# Coverage
+.coverage
+htmlcov/
+coverage.xml
+
+# OS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
+
+# Poetry (lock file IS committed for reproducible installs)
