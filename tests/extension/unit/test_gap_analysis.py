@@ -213,3 +213,71 @@ def test_opportunity_for_a_page_with_no_inputs_or_calls_only_suggests_happy_path
     opportunities = build_test_opportunities([static_page])
 
     assert opportunities[0].suggested_scenario_types == ["happy_path"]
+
+
+def test_reused_api_item_confidence_matches_its_underlying_correlation() -> None:
+    catalog = CapabilityCatalog(capabilities=[_employee_api_capability()])
+
+    items = build_extension_items([_employee_page()], catalog)
+
+    api_item = next(i for i in items if i.subject_type == ExtensionSubjectType.API_ENDPOINT)
+    assert api_item.confidence == 90  # endpoint pattern + HTTP method match, not an exact literal
+
+
+def test_create_new_api_item_has_a_confident_nonzero_score() -> None:
+    catalog = CapabilityCatalog(capabilities=[])
+
+    items = build_extension_items([_employee_page()], catalog)
+
+    api_item = next(i for i in items if i.subject_type == ExtensionSubjectType.API_ENDPOINT)
+    assert api_item.confidence > 0
+
+
+def test_unknown_authentication_item_has_low_confidence() -> None:
+    items = build_extension_items([], CapabilityCatalog(capabilities=[]))
+
+    auth_item = next(i for i in items if i.subject_type == ExtensionSubjectType.AUTHENTICATION)
+    assert auth_item.confidence < 50
+
+
+def test_reuse_existing_authentication_item_has_higher_confidence_than_unknown() -> None:
+    known_catalog = CapabilityCatalog(
+        capabilities=[
+            ExistingCapability(
+                category=CapabilityCategory.AUTHENTICATION,
+                name="JWT",
+                source_file="",
+                evidence="JWT mentioned in repository",
+            )
+        ]
+    )
+    unknown_items = build_extension_items([], CapabilityCatalog(capabilities=[]))
+    known_items = build_extension_items([], known_catalog)
+
+    unknown_auth = next(
+        i for i in unknown_items if i.subject_type == ExtensionSubjectType.AUTHENTICATION
+    )
+    known_auth = next(
+        i for i in known_items if i.subject_type == ExtensionSubjectType.AUTHENTICATION
+    )
+    assert known_auth.confidence > unknown_auth.confidence
+
+
+def test_page_title_match_confidence_is_lower_than_an_exact_api_correlation_match() -> None:
+    catalog = CapabilityCatalog(
+        capabilities=[
+            _employee_api_capability(),
+            ExistingCapability(
+                category=CapabilityCategory.PAGE_OBJECT,
+                name="EmployeeDetailsPage",
+                source_file="pages/employee_details_page.py",
+                evidence="class EmployeeDetailsPage",
+            ),
+        ]
+    )
+
+    items = build_extension_items([_employee_page()], catalog)
+
+    page_item = next(i for i in items if i.subject_type == ExtensionSubjectType.UI_PAGE)
+    api_item = next(i for i in items if i.subject_type == ExtensionSubjectType.API_ENDPOINT)
+    assert 0 < page_item.confidence < api_item.confidence

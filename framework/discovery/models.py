@@ -40,12 +40,20 @@ class DiscoveredNetworkCall(BaseModel):
     framework. `path` is the URL's path component alone (no query string,
     which may carry tokens/PII) — this is what a later correlation step
     (see `framework.extension`) matches against an `ExistingCapability`'s
-    `endpoint_pattern`.
+    `endpoint_pattern`. `host` is the bare hostname (`urlparse().netloc`
+    — no scheme/port/credentials/query) — the same "shape, never a secret
+    value" discipline the rest of this model already follows: a hostname
+    isn't a credential (it's already visible in any browser DevTools
+    Network tab), but it's exactly what
+    `framework.extension.network_classification` needs to tell the
+    application's own API apart from a third-party/analytics/CDN domain,
+    which `path` alone can never distinguish.
     """
 
     method: str
     path: str
     status: int
+    host: str = ""
     query_param_names: list[str] = Field(default_factory=list)
     request_body_keys: list[str] = Field(default_factory=list)
     response_body_keys: list[str] = Field(default_factory=list)

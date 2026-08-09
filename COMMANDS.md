@@ -20,6 +20,7 @@ Not sure which document you need?
 
 - [Install](#install)
 - [Configure](#configure)
+- [Doctor (environment preflight)](#doctor-environment-preflight)
 - [Verify (quality gates)](#verify-quality-gates)
 - [Run tests](#run-tests)
 - [Discover (Application Discovery — optional)](#discover-application-discovery--optional)
@@ -108,6 +109,94 @@ Edit `browser.browser` / `browser.headless` in `config/environments/<env>.yaml`.
 Supported `browser` values: `chromium`, `chrome`, `edge`, `firefox`,
 `safari` (WebKit engine — see [docs/Architecture.md](docs/Architecture.md)
 for why real Safari.app can't be driven).
+
+---
+
+## Doctor (environment preflight)
+
+Read-only environment capability check — Operating System/Architecture,
+Python (+ virtual environment, Poetry), Node (node/npm/npx), browsers
+(system Edge/Chrome/Firefox **and** Playwright-managed Chromium/Firefox/
+WebKit — these are not the same thing, see
+[docs/Architecture.md](docs/Architecture.md)), FFmpeg, Docker, Git
+(repository/branch/working-tree-clean status). Run this on a new machine
+before `discover`/`sync`/`extension` — every one of those already assumes
+a working browser engine, and `doctor` is how you find out *before* a run
+fails partway through instead of after.
+
+### Command
+
+macOS/Linux:
+
+```bash
+poetry run python -m framework doctor
+poetry run python -m framework doctor --check
+poetry run python -m framework doctor --fix
+poetry run python -m framework doctor --fix --dry-run
+poetry run python -m framework doctor --browser firefox
+poetry run python -m framework doctor --report doctor_report.json
+
+# Convenience wrapper (same command; no need to remember the module path)
+scripts/doctor.sh --fix
+```
+
+Windows (Command Prompt — every line below runs as pasted, no `^` continuation needed):
+
+```bat
+poetry run python -m framework doctor
+poetry run python -m framework doctor --check
+poetry run python -m framework doctor --fix
+poetry run python -m framework doctor --fix --dry-run
+poetry run python -m framework doctor --browser firefox
+poetry run python -m framework doctor --report doctor_report.json
+
+REM Convenience wrapper
+scripts\doctor.bat --fix
+```
+
+Windows (PowerShell):
+
+```powershell
+poetry run python -m framework doctor
+poetry run python -m framework doctor --fix
+poetry run python -m framework doctor --browser firefox
+
+# Convenience wrapper
+.\scripts\doctor.ps1 --fix
+```
+
+### Purpose
+
+- Detects every capability this framework can use and prints a matrix of
+  AVAILABLE/MISSING/DEGRADED/NOT_REQUIRED/UNSUPPORTED/BLOCKED per item,
+  each with a `Reason`/`Remediation` line when it isn't simply AVAILABLE.
+- Recommends one browser (bundled Chromium first, then Edge, Chrome,
+  Firefox, WebKit) — or reports exactly why none is usable. `--browser
+  <name>` requests one explicitly; if it isn't available, doctor says why
+  and never silently substitutes a different engine.
+- `--fix` proposes writing `AUTOMATION_BROWSER=<recommended>` to `.env`
+  (this framework's existing config-override layer, already wired through
+  `config/environments/<env>.yaml`'s `${AUTOMATION_BROWSER:-chromium}`) —
+  never overwrites a differing existing value unless `--force` is also
+  passed; `--dry-run` shows the same plan without writing anything.
+- `--check` is an explicit, CI-friendly alias for the default behavior
+  (both exit non-zero when a required capability is missing).
+
+### Prerequisite
+
+`poetry install --no-root` already run. Nothing else — doctor is designed
+to work even in a partially configured environment; finding that out is
+the point of running it.
+
+### Output
+
+The capability matrix + recommended browser + a one-line summary on
+stdout; optionally a JSON `DoctorReport` via `--report <path>`. Exit code
+`0` when every *required* capability is present, `3` when one is missing
+— the same code `extension run` uses for its own preflight stage (see
+[Extend an existing framework for a new UI](#extend-an-existing-framework-for-a-new-ui-optional)),
+so CI can treat exit code `3` uniformly as "environment problem" from
+either entry point.
 
 ---
 
@@ -251,15 +340,108 @@ document. `generate` writes `.py` files under `--output-dir` (default
 
 Use this read-only-by-default workflow when a customer has a mature
 automation suite but introduces a new UI on the same backend. It
-inventories existing assets, discovers the new UI, writes a
-human-reviewable reuse/extension plan, and — only after explicit
-approval — generates a framework-native scaffold for whatever genuinely
-needs to be created. Neither the existing repository nor the new UI is
-ever modified.
+inventories existing assets, discovers the new UI, classifies and
+deduplicates every network call the new UI actually made (so CSS/JS/image/
+analytics/third-party noise and authentication traffic are never mistaken
+for application API evidence), scores how trustworthy the discovery run
+itself is (a login-page redirect is a real, detected outcome — not a
+silent false positive), writes a human-reviewable reuse/extension plan,
+and — only after explicit approval — generates a framework-native
+scaffold for whatever genuinely needs to be created. Neither the existing
+repository nor the new UI is ever modified.
+
+### One-command workflow: `extension run`
+
+The recommended entry point — runs every stage in order (environment
+preflight → analyze the existing framework → discover the new UI →
+classify/deduplicate network calls → score discovery quality → correlate
+against the existing capability catalog → build the extension plan →
+safety gate → optional scaffold) and writes everything under a single
+timestamped `<output-dir>/<UTC timestamp>/` directory. Never generates
+scaffold code without `--scaffold`, and even then only after the
+safety gate passes and the write is explicitly confirmed.
+
+macOS/Linux:
 
 ```bash
-# One-shot: analyze the existing framework AND discover the new UI in a
-# single command — the normal path, no need to run three CLIs by hand.
+# Analysis only — the default; nothing is ever written outside --output-dir.
+poetry run python -m framework.extension run \
+  --framework <existing-framework-path> --url <new-ui-url> \
+  --output-dir extension-output
+
+# Also generate scaffold code, with an interactive y/N confirmation before
+# any file is written.
+poetry run python -m framework.extension run \
+  --framework <existing-framework-path> --url <new-ui-url> \
+  --scaffold --output-dir extension-output
+
+# Non-interactive (CI): skip the confirmation prompt, allow uncommitted
+# changes in the current working tree, preview only (no files written).
+poetry run python -m framework.extension run \
+  --framework <existing-framework-path> --url <new-ui-url> \
+  --scaffold --yes --allow-dirty --dry-run --output-dir extension-output
+
+# Convenience wrapper (same command, forwards every argument as-is)
+scripts/extension-run.sh --framework <existing-framework-path> --url <new-ui-url> --scaffold
+```
+
+Windows (Command Prompt — every line below runs as pasted, no `^` continuation needed):
+
+```bat
+poetry run python -m framework.extension run --framework <existing-framework-path> --url <new-ui-url> --output-dir extension-output
+
+poetry run python -m framework.extension run --framework <existing-framework-path> --url <new-ui-url> --scaffold --output-dir extension-output
+
+poetry run python -m framework.extension run --framework <existing-framework-path> --url <new-ui-url> --scaffold --yes --allow-dirty --dry-run --output-dir extension-output
+
+REM Convenience wrapper
+scripts\extension-run.bat --framework <existing-framework-path> --url <new-ui-url> --scaffold
+```
+
+Windows (PowerShell):
+
+```powershell
+poetry run python -m framework.extension run --framework <existing-framework-path> --url <new-ui-url> --output-dir extension-output
+
+poetry run python -m framework.extension run --framework <existing-framework-path> --url <new-ui-url> --scaffold --output-dir extension-output
+
+# Convenience wrapper
+.\scripts\extension-run.ps1 --framework <existing-framework-path> --url <new-ui-url> --scaffold
+```
+
+#### Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | Success — analysis complete (and scaffold written, if `--scaffold` was requested and approved) |
+| 1 | Unexpected/unhandled error (missing file, invalid argument value, corrupt archive, ...) |
+| 2 | Usage error — argparse's own default for invalid CLI arguments |
+| 3 | Environment preflight failed (`framework doctor`) — skip with `--skip-doctor` |
+| 4 | Discovery quality is `BLOCKED` — this looks like an authentication redirect, not the real application; the run stops before any scaffold stage, whether or not `--scaffold` was passed |
+| 5 | Git working tree is dirty and `--allow-dirty` was not passed (only checked when `--scaffold` is requested) |
+| 6 | `--scaffold` was requested but declined — `--dry-run`, or no `--yes` and the answer wasn't `y` (a missing `--yes` on a non-interactive stdin is always treated as declined, never hangs waiting for input) |
+
+#### Safety gate: discovery quality
+
+Every run scores its own discovery quality (`HIGH_CONFIDENCE`/`PARTIAL`/
+`LOW_CONFIDENCE`/`BLOCKED`) from concrete signals: whether the requested
+page turned out to be a login page (redirect detection), what fraction of
+discovered pages look like login pages, whether any interactive elements
+were found at all, and whether classification found any real application
+API traffic. `BLOCKED` — e.g. discovery only ever reached a login page —
+stops the run with exit code 4 and an explicit warning, before scaffold
+ever runs, rather than silently producing a report built entirely from
+authentication-redirect noise.
+
+### Advanced: manual step-by-step (analyze / scaffold separately)
+
+Useful for CI steps that need to inspect the intermediate reports, or
+reuse an already-computed `sync analyze`/`discover ui` report instead of
+re-running discovery.
+
+```bash
+# Equivalent to `extension run`'s analysis stages, but writes wherever
+# you point it instead of a timestamped directory.
 # --capture-network is always on for the discovered UI here; it stores
 # shape only (HTTP method/path/status and parameter/key names), never
 # values, headers, or credentials.
@@ -281,14 +463,20 @@ poetry run python -m framework extension analyze --sync-report existing.json --d
 
 The extension report classifies each item as `REUSE_EXISTING`,
 `EXTEND_EXISTING`, `CREATE_NEW`, `UNKNOWN`, or `MANUAL_REVIEW`, with source
-evidence, and prints a REUSE MATRIX summary. API matches require endpoint
-and HTTP-method evidence; table/path matches are possible DB reuse
-candidates, not proof of data lineage. Review the report before scaffolding
-anything.
+evidence and a `confidence` score (0-100), and prints a REUSE MATRIX
+summary. API matches require endpoint and HTTP-method evidence;
+table/path matches are possible DB reuse candidates, not proof of data
+lineage. `analyze`'s report also carries the same `network_classification`
+(raw/deduplicated/classified call counts) and `discovery_quality` data
+`extension run` prints — inspect `extension-plan.json` directly for the
+full detail. Review the report before scaffolding anything.
 
 ### Framework-native scaffolding (optional, human-approved)
 
-Generates NEW automation — Page Object + test — only for items the
+The manual/standalone form of the same scaffold stage `extension run
+--scaffold` runs automatically — use this when you already have separate
+`extension-plan.json`/`existing.json`/`new-ui.json` files (e.g. from CI)
+and want scaffold as its own step. Generates NEW automation — Page Object + test — only for items the
 extension plan classified `CREATE_NEW`/`EXTEND_EXISTING`, only in the
 existing repository's own detected language/framework/test-runner style
 (Java+Selenium+TestNG, Java+Selenium+JUnit, Python+pytest+Playwright,

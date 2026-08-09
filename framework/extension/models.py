@@ -88,12 +88,19 @@ class UIAPICorrelation(BaseModel):
     lists the concrete signals that led to `status` (e.g. "endpoint
     pattern match", "HTTP method match", "query parameter name overlap")
     so a human reviewer can verify the reasoning, not just trust a label.
+    `confidence` (0-100, additive field, defaults to 0 for any caller that
+    predates it) is a deterministic function of `status` and how many
+    signals in `evidence` agree — see
+    `framework.extension.correlation._confidence_for_status` — never a
+    separate, independently-assigned guess that could disagree with the
+    evidence next to it.
     """
 
     discovered_call: DiscoveredNetworkCall
     matched_capability: ExistingCapability | None = None
     status: RelationshipStatus
     evidence: list[str] = Field(default_factory=list)
+    confidence: int = Field(default=0, ge=0, le=100)
 
 
 class ExtensionItem(BaseModel):
@@ -104,6 +111,13 @@ class ExtensionItem(BaseModel):
     explains the classification in plain language; `evidence` holds the
     lower-level supporting facts (mirrors `MigrationCandidate.reason` in
     `framework.sync.models` — never a bare label with no justification).
+    `confidence` (0-100, additive field, defaults to 0) carries the same
+    meaning as `UIAPICorrelation.confidence` — for items built directly
+    from a correlation it is copied through unchanged; for items with no
+    underlying correlation (a page, the aggregate authentication item, a
+    shared-infrastructure item) it reflects how confident the
+    classification itself is, not a match strength — see
+    `framework.extension.gap_analysis._confidence_for_classification`.
     """
 
     subject: str
@@ -112,6 +126,7 @@ class ExtensionItem(BaseModel):
     matched_capability: ExistingCapability | None = None
     reason: str
     evidence: list[str] = Field(default_factory=list)
+    confidence: int = Field(default=0, ge=0, le=100)
 
 
 class TestOpportunity(BaseModel):
@@ -199,6 +214,124 @@ class ScaffoldManifest(BaseModel):
         return cls.model_validate_json(Path(path).read_text(encoding="utf-8"))
 
 
+class NetworkCallClassification(str, Enum):
+    """What a discovered network call actually *is*, before it's ever
+    handed to correlation — the missing stage that let CSS/JS/image
+    requests and login-page assets get treated as application capability
+    evidence. Every value here is assigned from real, inspectable
+    evidence (a file extension, a path segment, a hostname, a body
+    shape) — never a default guess; `UNKNOWN` is the honest fallback when
+    none of the classification rules matched with confidence.
+    """
+
+    APPLICATION_API = "application_api"
+    AUTHENTICATION = "authentication"
+    STATIC_ASSET = "static_asset"
+    FRAMEWORK_ASSET = "framework_asset"
+    ANALYTICS = "analytics"
+    THIRD_PARTY = "third_party"
+    DOCUMENT = "document"
+    UNKNOWN = "unknown"
+
+
+class ClassifiedNetworkCall(BaseModel):
+    """One discovered network call after classification + deduplication —
+    `duplicate_count` is 1 for a call with no duplicates, >1 when N raw
+    calls collapsed into this single entry (see
+    `framework.extension.network_classification`).
+    """
+
+    call: DiscoveredNetworkCall
+    classification: NetworkCallClassification
+    reason: str
+    duplicate_count: int = 1
+
+
+class NetworkClassificationSummary(BaseModel):
+    """Every count here must trace back to a real `len()` over the actual
+    input/output lists — never an invented or estimated number (the
+    governing requirement this model exists to satisfy: "use actual
+    counts, not invented values").
+    """
+
+    raw_count: int = 0
+    duplicates_removed: int = 0
+    static_or_framework_ignored: int = 0
+    analytics_ignored: int = 0
+    third_party_ignored: int = 0
+    document_ignored: int = 0
+    authentication_count: int = 0
+    application_candidate_count: int = 0
+    unknown_count: int = 0
+
+
+class NetworkClassificationResult(BaseModel):
+    """The full RAW -> NORMALIZE -> DEDUPLICATE -> CLASSIFY output.
+    `raw_calls` is kept in full (nothing is ever deleted from the raw
+    discovery data — see the module docstring) even though only
+    `classified_calls` (deduplicated) is what `framework.extension.correlation`
+    should actually consume.
+    """
+
+    raw_calls: list[DiscoveredNetworkCall] = Field(default_factory=list)
+    classified_calls: list[ClassifiedNetworkCall] = Field(default_factory=list)
+    summary: NetworkClassificationSummary = Field(default_factory=NetworkClassificationSummary)
+
+    def application_and_auth_calls(self) -> list[DiscoveredNetworkCall]:
+        """The only subset correlation should ever look at — application
+        API traffic and authentication endpoints, never static/framework/
+        analytics/third-party noise.
+        """
+        return [
+            entry.call
+            for entry in self.classified_calls
+            if entry.classification
+            in (NetworkCallClassification.APPLICATION_API, NetworkCallClassification.AUTHENTICATION)
+        ]
+
+
+class LoginPageSignal(BaseModel):
+    """Whether one discovered page looks like a login/authentication page
+    rather than genuine application content — the missing check that let
+    a login-page redirect get reported as successful discovery of the
+    customer's actual target page. `evidence` always lists the concrete
+    signals (URL path, page title, a password-type input field) that led
+    to the verdict; an empty `evidence` list is why `is_likely_login_page`
+    is `False`, never an unexplained guess.
+    """
+
+    page_url: str
+    is_likely_login_page: bool
+    evidence: list[str] = Field(default_factory=list)
+
+
+class DiscoveryQualityLevel(str, Enum):
+    """How much a human should trust a discovery run before scaffolding
+    from it — the honesty check the governing philosophy requires
+    ("ANALYZE FIRST -> CLASSIFY SECOND -> CORRELATE THIRD -> REVIEW
+    FOURTH -> SCAFFOLD LAST"). `BLOCKED` is a real, expected outcome (e.g.
+    the only page discovered was a login page) — see
+    `framework.extension.discovery_quality`.
+    """
+
+    HIGH_CONFIDENCE = "high_confidence"
+    PARTIAL = "partial"
+    LOW_CONFIDENCE = "low_confidence"
+    BLOCKED = "blocked"
+
+
+class DiscoveryQualityScore(BaseModel):
+    """A 0-100 score plus the honest, human-readable reasons behind it —
+    never a bare number. `reasons` always explains every point lost, the
+    same "never a bare label" precedent `UIAPICorrelation.evidence` and
+    `ExtensionItem.evidence` already follow.
+    """
+
+    score: int = 0
+    level: DiscoveryQualityLevel = DiscoveryQualityLevel.BLOCKED
+    reasons: list[str] = Field(default_factory=list)
+
+
 class ExtensionReport(BaseModel):
     """The full output of the extension-analysis pipeline — the
     "what already exists, what does the new UI need, what can be reused"
@@ -206,6 +339,12 @@ class ExtensionReport(BaseModel):
     the checkpoint" precedent as `framework.discovery.models.DiscoveryReport`
     and `framework.sync.models.RepositoryAnalysis`). Never implies any
     modification happened to the existing repository or the new UI.
+    `network_classification`/`discovery_quality` are additive fields
+    (default `None`) so a report saved before this milestone still loads
+    cleanly — `correlations` is always built from
+    `network_classification.application_and_auth_calls()` when a
+    classification is available, never from the unfiltered raw calls (see
+    `framework.extension.__main__._cmd_analyze`).
     """
 
     generated_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
@@ -214,6 +353,8 @@ class ExtensionReport(BaseModel):
     correlations: list[UIAPICorrelation] = Field(default_factory=list)
     extension_items: list[ExtensionItem] = Field(default_factory=list)
     test_opportunities: list[TestOpportunity] = Field(default_factory=list)
+    network_classification: NetworkClassificationResult | None = None
+    discovery_quality: DiscoveryQualityScore | None = None
 
     def save(self, path: str | Path) -> None:
         Path(path).write_text(self.model_dump_json(indent=2), encoding="utf-8")

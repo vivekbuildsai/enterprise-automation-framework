@@ -1,15 +1,16 @@
 """Single entry point for every CLI capability this framework ships.
 
+    poetry run python -m framework doctor          # environment/capability preflight
     poetry run python -m framework discover ...   # Application Discovery (optional)
     poetry run python -m framework sync ...        # Existing Framework Sync (optional)
     poetry run python -m framework extension ...   # New-UI extension/reuse analysis (optional)
     poetry run python -m framework validate --expected e.json --actual a.json
     poetry run python -m framework report generate
 
-This is a thin dispatcher, not a new layer of logic: `discover`/`sync`/
-`extension` delegate straight to their own independently-runnable
-`python -m framework.discovery`/`python -m framework.sync`/
-`python -m framework.extension` CLIs.
+This is a thin dispatcher, not a new layer of logic: `doctor`/`discover`/
+`sync`/`extension` delegate straight to their own independently-runnable
+`python -m framework.doctor`/`python -m framework.discovery`/
+`python -m framework.sync`/`python -m framework.extension` CLIs.
 `validate`/`report` are small, self-contained wrappers around existing
 core building blocks (`DataComparator`, the `allure` CLI) — core
 capabilities, always available, no feature flag.
@@ -79,14 +80,18 @@ def _cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
-_DELEGATED_COMMANDS = ("discover", "sync", "extension")
+_DELEGATED_COMMANDS = ("doctor", "discover", "sync", "extension")
 
 
 def _delegate(command: str, rest: list[str]) -> int:
-    """`discover`/`sync`/`extension` are each independently-runnable CLIs
-    in their own right — this only forwards argv, it never re-parses or
-    re-interprets it.
+    """`doctor`/`discover`/`sync`/`extension` are each independently-runnable
+    CLIs in their own right — this only forwards argv, it never re-parses
+    or re-interprets it.
     """
+    if command == "doctor":
+        from framework.doctor.__main__ import main as doctor_main
+
+        return doctor_main(rest)
     if command == "discover":
         from framework.discovery.__main__ import main as discovery_main
 

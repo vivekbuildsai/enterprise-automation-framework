@@ -23,6 +23,17 @@ from framework.discovery.models import DiscoveredNetworkCall
 from framework.extension.models import RelationshipStatus, UIAPICorrelation
 from framework.sync.models import CapabilityCatalog, CapabilityCategory, ExistingCapability
 
+_CONFIDENCE_EXACT_LITERAL_MATCH = 100
+_CONFIDENCE_PATTERN_AND_METHOD_MATCH = 90
+_CONFIDENCE_PATTERN_ONLY_MATCH = 55
+_CONFIDENCE_TABLE_NAME_MATCH = 50
+_CONFIDENCE_AMBIGUOUS_MATCHES = 30
+_CONFIDENCE_NO_MATCH = 85
+"""`NOT_FOUND` is a confident, exhaustive-search *negative* result (the
+whole catalog was checked, see `correlate_network_call`) — not the same
+kind of uncertainty `MANUAL_REVIEW`'s ambiguity represents, so it is
+scored well above it, not at 0."""
+
 
 @cache
 def _pattern_regex(endpoint_pattern: str) -> re.Pattern[str]:
@@ -88,13 +99,16 @@ def correlate_network_call(
     if len(exact_matches) == 1:
         capability = exact_matches[0]
         evidence = ["endpoint pattern match", "HTTP method match"]
+        confidence = _CONFIDENCE_PATTERN_AND_METHOD_MATCH
         if capability.endpoint_pattern == call.path:
             evidence.append("exact literal path match")
+            confidence = _CONFIDENCE_EXACT_LITERAL_MATCH
         return UIAPICorrelation(
             discovered_call=call,
             matched_capability=capability,
             status=RelationshipStatus.LIKELY_REUSABLE,
             evidence=evidence,
+            confidence=confidence,
         )
     if len(exact_matches) > 1:
         return UIAPICorrelation(
@@ -104,6 +118,7 @@ def correlate_network_call(
                 f"{len(exact_matches)} existing API capabilities match both endpoint "
                 "pattern and HTTP method — ambiguous, needs human review"
             ],
+            confidence=_CONFIDENCE_AMBIGUOUS_MATCHES,
         )
 
     path_only_matches = [c for c in api_capabilities if _endpoint_matches(c, call.path)]
@@ -117,6 +132,7 @@ def correlate_network_call(
                 "endpoint pattern match",
                 f"HTTP method differs (existing={capability.http_method}, new UI={call.method})",
             ],
+            confidence=_CONFIDENCE_PATTERN_ONLY_MATCH,
         )
     if len(path_only_matches) > 1:
         return UIAPICorrelation(
@@ -126,12 +142,14 @@ def correlate_network_call(
                 f"{len(path_only_matches)} existing API capabilities match the endpoint "
                 "pattern but not the HTTP method — ambiguous, needs human review"
             ],
+            confidence=_CONFIDENCE_AMBIGUOUS_MATCHES,
         )
 
     return UIAPICorrelation(
         discovered_call=call,
         status=RelationshipStatus.NOT_FOUND,
         evidence=["no existing API capability matches this endpoint"],
+        confidence=_CONFIDENCE_NO_MATCH,
     )
 
 
@@ -174,6 +192,7 @@ def correlate_database_usage(
                     matched_capability=matches[0],
                     status=RelationshipStatus.POSSIBLY_REUSABLE,
                     evidence=[f"path segment matches known table '{matches[0].name}'"],
+                    confidence=_CONFIDENCE_TABLE_NAME_MATCH,
                 )
             )
         elif len(matches) > 1:
@@ -182,6 +201,7 @@ def correlate_database_usage(
                     discovered_call=call,
                     status=RelationshipStatus.MANUAL_REVIEW,
                     evidence=[f"{len(matches)} known tables match path segments — ambiguous"],
+                    confidence=_CONFIDENCE_AMBIGUOUS_MATCHES,
                 )
             )
         else:
@@ -190,6 +210,7 @@ def correlate_database_usage(
                     discovered_call=call,
                     status=RelationshipStatus.NOT_FOUND,
                     evidence=["no known database table matches this path"],
+                    confidence=_CONFIDENCE_NO_MATCH,
                 )
             )
     return correlations

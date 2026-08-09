@@ -54,6 +54,25 @@ generated/
 discovery_report.json
 discovery_report.*.json
 
+# New-UI extension workflow output (framework.extension) — the
+# `extension run` orchestrator's timestamped output directory, plus the
+# intermediate report filenames `analyze`/`scaffold`/`sync`/`discover`
+# default to when run manually (see COMMANDS.md). Always machine/target-
+# specific and meant for human review, never committed.
+extension-output/
+existing_framework_analysis.json
+new_ui_discovery_report.json
+extension_report.json
+extension_ai_recommendations.json
+existing.json
+new-ui.json
+reuse.json
+extension-plan.json
+
+# Environment doctor output (framework.doctor) — a machine-specific
+# capability report, never meant to be shared or committed.
+doctor_report.json
+
 # Coverage
 .coverage
 htmlcov/

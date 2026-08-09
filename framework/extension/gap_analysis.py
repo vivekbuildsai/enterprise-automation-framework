@@ -33,6 +33,33 @@ _STATUS_TO_CLASSIFICATION: dict[RelationshipStatus, ExtensionClassification] = {
     RelationshipStatus.MANUAL_REVIEW: ExtensionClassification.MANUAL_REVIEW,
 }
 
+# Confidence for `ExtensionItem`s built without an underlying
+# `UIAPICorrelation` (a page, the aggregate authentication item, a
+# shared-infrastructure item) — reflects how confident the classification
+# itself is, not a match strength. `REUSE_EXISTING` here comes from a
+# single title/category signal (weaker than a correlation's endpoint+method
+# match), so it is scored below `correlation._CONFIDENCE_PATTERN_AND_METHOD_MATCH`.
+_CONFIDENCE_TITLE_MATCH = 65
+_CONFIDENCE_SHARED_CAPABILITY_PRESENT = 75
+_CONFIDENCE_CONFIDENT_CREATE_NEW = 85
+_CONFIDENCE_NO_DATA_TO_EVALUATE = 20
+_CONFIDENCE_MANUAL_REVIEW = 30
+
+
+def _confidence_for_classification(classification: ExtensionClassification) -> int:
+    """The default confidence for an `ExtensionItem` with no underlying
+    correlation to copy a score from — callers that have stronger,
+    signal-specific evidence (e.g. `_page_extension_item`'s title match)
+    pass their own value instead of relying on this fallback.
+    """
+    if classification == ExtensionClassification.CREATE_NEW:
+        return _CONFIDENCE_CONFIDENT_CREATE_NEW
+    if classification == ExtensionClassification.MANUAL_REVIEW:
+        return _CONFIDENCE_MANUAL_REVIEW
+    if classification == ExtensionClassification.UNKNOWN:
+        return _CONFIDENCE_NO_DATA_TO_EVALUATE
+    return _CONFIDENCE_SHARED_CAPABILITY_PRESENT
+
 
 def _correlation_reason(correlation: UIAPICorrelation) -> str:
     call = correlation.discovered_call
@@ -78,6 +105,7 @@ def _page_extension_item(page: DiscoveredPage, catalog: CapabilityCatalog) -> Ex
                     evidence=[
                         f"page title '{page.title}' found in capability name '{capability.name}'"
                     ],
+                    confidence=_CONFIDENCE_TITLE_MATCH,
                 )
     return ExtensionItem(
         subject=page.title or page.url,
@@ -85,6 +113,7 @@ def _page_extension_item(page: DiscoveredPage, catalog: CapabilityCatalog) -> Ex
         classification=ExtensionClassification.CREATE_NEW,
         reason="No existing Page Object or component matches this newly discovered page.",
         evidence=["new UI page has no automation today"],
+        confidence=_confidence_for_classification(ExtensionClassification.CREATE_NEW),
     )
 
 
@@ -98,6 +127,7 @@ def _authentication_extension_item(catalog: CapabilityCatalog) -> ExtensionItem:
             subject_type=ExtensionSubjectType.AUTHENTICATION,
             classification=ExtensionClassification.UNKNOWN,
             reason="No existing authentication mechanism was detected to compare against.",
+            confidence=_confidence_for_classification(ExtensionClassification.UNKNOWN),
         )
     capability = auth_capabilities[0]
     return ExtensionItem(
@@ -111,6 +141,7 @@ def _authentication_extension_item(catalog: CapabilityCatalog) -> ExtensionItem:
             "rather than implement a second one."
         ),
         evidence=[capability.evidence] if capability.evidence else [],
+        confidence=_confidence_for_classification(ExtensionClassification.REUSE_EXISTING),
     )
 
 
@@ -134,6 +165,7 @@ def _shared_capability_item(
             subject_type=subject_type,
             classification=ExtensionClassification.UNKNOWN,
             reason=absent_reason,
+            confidence=_confidence_for_classification(ExtensionClassification.UNKNOWN),
         )
     capability = capabilities[0]
     return ExtensionItem(
@@ -150,6 +182,7 @@ def _shared_capability_item(
             if capability.evidence or capability.source_file
             else []
         ),
+        confidence=_confidence_for_classification(ExtensionClassification.REUSE_EXISTING),
     )
 
 
@@ -177,6 +210,7 @@ def build_extension_items(
                     matched_capability=correlation.matched_capability,
                     reason=_correlation_reason(correlation),
                     evidence=correlation.evidence,
+                    confidence=correlation.confidence,
                 )
             )
         for correlation in correlate_database_usage(all_calls, catalog):

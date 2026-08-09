@@ -16,7 +16,7 @@ from framework.extension.correlation import (
     correlate_network_call,
     correlate_network_calls,
 )
-from framework.extension.models import RelationshipStatus
+from framework.extension.models import RelationshipStatus, UIAPICorrelation
 from framework.sync.models import (
     CapabilityCatalog,
     CapabilityCategory,
@@ -188,3 +188,78 @@ def test_correlate_database_usage_ambiguous_path_is_manual_review() -> None:
     correlations = correlate_database_usage([call], catalog)
 
     assert correlations[0].status is RelationshipStatus.MANUAL_REVIEW
+
+
+def test_exact_literal_match_has_higher_confidence_than_pattern_and_method_match() -> None:
+    catalog = CapabilityCatalog(
+        capabilities=[_capability(name="EmployeeApi.search", endpoint_pattern="/employees/search")]
+    )
+    exact_call = DiscoveredNetworkCall(method="GET", path="/employees/search", status=200)
+    pattern_call_catalog = CapabilityCatalog(capabilities=[_capability()])
+    pattern_call = DiscoveredNetworkCall(method="GET", path="/employees/42", status=200)
+
+    exact_correlation = correlate_network_call(exact_call, catalog)
+    pattern_correlation = correlate_network_call(pattern_call, pattern_call_catalog)
+
+    assert exact_correlation.confidence == 100
+    assert pattern_correlation.confidence == 90
+    assert exact_correlation.confidence > pattern_correlation.confidence
+
+
+def test_http_method_mismatch_has_lower_confidence_than_full_match() -> None:
+    catalog = CapabilityCatalog(capabilities=[_capability(http_method="GET")])
+    call = DiscoveredNetworkCall(method="DELETE", path="/employees/42", status=200)
+
+    correlation = correlate_network_call(call, catalog)
+
+    assert 0 < correlation.confidence < 90
+
+
+def test_manual_review_confidence_is_low() -> None:
+    catalog = CapabilityCatalog(
+        capabilities=[
+            _capability(name="EmployeeApi.get_employee", source_file="a.py"),
+            _capability(name="LegacyEmployeeClient.get", source_file="b.py"),
+        ]
+    )
+    call = DiscoveredNetworkCall(method="GET", path="/employees/42", status=200)
+
+    correlation = correlate_network_call(call, catalog)
+
+    assert correlation.confidence <= 30
+
+
+def test_not_found_confidence_is_a_confident_negative_not_zero() -> None:
+    catalog = CapabilityCatalog(capabilities=[_capability()])
+    call = DiscoveredNetworkCall(method="GET", path="/invoices/99", status=200)
+
+    correlation = correlate_network_call(call, catalog)
+
+    assert correlation.status is RelationshipStatus.NOT_FOUND
+    assert correlation.confidence > 0
+
+
+def test_database_table_match_confidence_is_moderate() -> None:
+    catalog = CapabilityCatalog(
+        capabilities=[
+            ExistingCapability(
+                category=CapabilityCategory.DATABASE_UTILITY,
+                name="table:employee",
+                source_file="db/models.py",
+            )
+        ]
+    )
+    call = DiscoveredNetworkCall(method="GET", path="/employees/42", status=200)
+
+    correlations = correlate_database_usage([call], catalog)
+
+    assert 0 < correlations[0].confidence < 90
+
+
+def test_default_confidence_is_zero_for_a_correlation_built_without_one() -> None:
+    correlation = UIAPICorrelation(
+        discovered_call=DiscoveredNetworkCall(method="GET", path="/x", status=200),
+        status=RelationshipStatus.NOT_FOUND,
+    )
+
+    assert correlation.confidence == 0

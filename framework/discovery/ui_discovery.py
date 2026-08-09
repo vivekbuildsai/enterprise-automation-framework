@@ -95,6 +95,7 @@ def _to_discovered_network_call(exchange: CapturedExchange) -> DiscoveredNetwork
         method=exchange.method,
         path=parsed.path,
         status=exchange.status,
+        host=parsed.netloc,
         query_param_names=sorted(parse_qs(parsed.query).keys()),
         request_body_keys=request_body_keys,
         response_body_keys=_json_shape(exchange.response_json),

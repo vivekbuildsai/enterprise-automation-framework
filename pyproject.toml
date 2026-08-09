@@ -117,6 +117,8 @@ markers = [
   "sync: existing-framework analysis/sync engine tests (framework.sync)",
   "extension: new-UI-on-existing-framework extension/reuse analysis tests (framework.extension)",
   "cli: unified CLI dispatcher tests (framework.cli)",
+  "doctor: environment capability preflight tests (framework.doctor)",
+  "real_detection: opts a doctor test out of the mocked detect_all() fixture to run a real, unmocked machine probe (kept rare — see tests/doctor/unit/test_main.py)",
   "subscriber_management: Subscriber Management module",
   "provisioning: Provisioning module",
   "billing: Billing module",
